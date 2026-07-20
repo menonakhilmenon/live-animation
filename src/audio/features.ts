@@ -32,6 +32,18 @@ export interface AudioFeatures {
   /** 0–1 confidence in the tempo estimate. */
   tempoConfidence: number;
   /**
+   * Continuous bar phase (4 beats per bar), integer part = bar index,
+   * downbeat at fractional part 0. Only meaningful with an offline timeline;
+   * falls back to beatPhase/4 for live input.
+   */
+  barPhase: number;
+  /** 0–1 loudness of the current song section (quiet verse → loud chorus). */
+  section: number;
+  /** Seconds until the next detected drop (Infinity when none ahead). */
+  nextDropIn: number;
+  /** Content mode: 'music' | 'speech' | 'silence' | 'live' (no timeline). */
+  mode: string;
+  /**
    * Continuous beat phase from the phase-locked tempo oscillator; the
    * fractional part is the position within the current beat (0 = on the
    * beat). Lets animation anticipate beats instead of reacting to them.
@@ -53,6 +65,10 @@ export function emptyFeatures(): AudioFeatures {
     bpm: 0,
     tempoConfidence: 0,
     beatPhase: 0,
+    barPhase: 0,
+    section: 0.5,
+    nextDropIn: Infinity,
+    mode: 'live',
   };
 }
 

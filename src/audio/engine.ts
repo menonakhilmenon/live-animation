@@ -1,3 +1,4 @@
+import { Timeline, analyzeBuffer } from './analysis';
 import { AudioFeatures, emptyFeatures, ema } from './features';
 import { TempoTracker } from './tempo';
 
@@ -11,6 +12,21 @@ const MIN_BEAT_INTERVAL = 0.25;
 const BEAT_THRESHOLD = 1.35;
 /** Ignore beats when overall level is near silence. */
 const BEAT_MIN_LEVEL = 0.015;
+
+/** Index of the largest element <= t in an ascending array, or -1. */
+function binarySearchLE(arr: number[], t: number): number {
+  let lo = 0;
+  let hi = arr.length - 1;
+  let ans = -1;
+  while (lo <= hi) {
+    const m = (lo + hi) >> 1;
+    if (arr[m] <= t) {
+      ans = m;
+      lo = m + 1;
+    } else hi = m - 1;
+  }
+  return ans;
+}
 
 /**
  * Wraps the Web Audio API: routes an audio file or the microphone through an
@@ -29,20 +45,56 @@ export class AudioEngine {
 
   private tempo = new TempoTracker();
 
+  /** Offline whole-file analysis (null for mic / before analysis finishes). */
+  timeline: Timeline | null = null;
+  private clockEl: HTMLMediaElement | null = null;
+  private lastTimelineBeat = -1;
+
   /** Rolling history of instantaneous bass energy, for the beat threshold. */
   private bassHistory: number[] = [];
   private lastBeatTime = -1e9;
   private timeSec = 0;
 
-  /** Attach an <audio> element (file playback). Replaces any current source. */
+  private mediaSrc: MediaElementAudioSourceNode | null = null;
+  private mediaEl: HTMLMediaElement | null = null;
+
+  /**
+   * Attach an <audio> element (file playback). Replaces any current source.
+   * The MediaElementSource is created once per element and reconnected on
+   * later calls — createMediaElementSource throws if called twice for the
+   * same element (e.g. file → mic → file again).
+   */
   async useMediaElement(el: HTMLMediaElement): Promise<void> {
     const ctx = this.ensureContext();
     this.disconnectSource();
-    const src = ctx.createMediaElementSource(el);
-    src.connect(this.analyser!);
+    if (!this.mediaSrc || this.mediaEl !== el) {
+      this.mediaSrc = ctx.createMediaElementSource(el);
+      this.mediaEl = el;
+    }
+    this.mediaSrc.connect(this.analyser!);
     this.analyser!.connect(ctx.destination);
-    this.sourceNode = src;
+    this.sourceNode = this.mediaSrc;
     await ctx.resume();
+  }
+
+  /**
+   * Decode and analyze a full audio file offline, then drive features from
+   * the resulting timeline synced to the media element's playback clock.
+   */
+  async analyzeFile(file: File, el: HTMLMediaElement): Promise<Timeline> {
+    const ctx = this.ensureContext();
+    const buf = await ctx.decodeAudioData(await file.arrayBuffer());
+    // Mix to mono for analysis.
+    const mono = new Float32Array(buf.length);
+    for (let c = 0; c < buf.numberOfChannels; c++) {
+      const ch = buf.getChannelData(c);
+      for (let i = 0; i < buf.length; i++) mono[i] += ch[i] / buf.numberOfChannels;
+    }
+    const tl = analyzeBuffer(mono, buf.sampleRate);
+    this.timeline = tl;
+    this.clockEl = el;
+    this.lastTimelineBeat = -1;
+    return tl;
   }
 
   /** Use the microphone. Analysis only — mic audio is not played back. */
@@ -56,6 +108,8 @@ export class AudioEngine {
     src.connect(this.analyser!);
     this.sourceNode = src;
     this.micStream = stream;
+    this.timeline = null; // mic is live-only; fall back to causal tracking
+    this.clockEl = null;
     await ctx.resume();
   }
 
@@ -95,7 +149,62 @@ export class AudioEngine {
     f.bpm = this.tempo.bpm;
     f.tempoConfidence = this.tempo.confidence;
     f.beatPhase = this.tempo.phase;
+    f.barPhase = this.tempo.phase / 4;
+    f.section = ema(f.section, Math.min(1, f.rms * 3), 2.0, dt);
+    f.nextDropIn = Infinity;
+    f.mode = 'live';
+
+    // Offline timeline overrides the causal estimates with exact values.
+    if (this.timeline && this.clockEl && !this.clockEl.paused) {
+      this.applyTimeline(this.timeline, this.clockEl.currentTime, dt);
+    }
     return f;
+  }
+
+  private applyTimeline(tl: Timeline, t: number, dt: number): void {
+    const f = this.features;
+    f.mode = tl.mode;
+
+    // Frame-sampled features (deterministic, from the offline STFT).
+    const idx = Math.max(0, Math.min(tl.frames.rms.length - 1, Math.round(t / tl.hopTime)));
+    f.brightness = tl.frames.centroid[idx];
+    f.bass = ema(f.bass, tl.frames.bass[idx], 0.05, dt);
+    f.mid = ema(f.mid, tl.frames.mid[idx], 0.08, dt);
+    f.treble = ema(f.treble, tl.frames.treble[idx], 0.08, dt);
+    f.section = tl.frames.loudness[idx];
+
+    // Exact beat grid → beat events, continuous beat/bar phase.
+    if (tl.beats.length >= 2) {
+      let i = binarySearchLE(tl.beats, t);
+      const period = 60 / tl.bpm;
+      let frac: number;
+      if (i < 0) {
+        frac = Math.max(0, 1 - (tl.beats[0] - t) / period);
+        i = -1;
+      } else {
+        const next = i + 1 < tl.beats.length ? tl.beats[i + 1] : tl.beats[i] + period;
+        frac = Math.min(1, (t - tl.beats[i]) / Math.max(1e-3, next - tl.beats[i]));
+      }
+      f.beatPhase = i + frac;
+      f.barPhase = (i - tl.downbeatOffset + frac) / 4;
+      f.bpm = tl.bpm;
+      f.tempoConfidence = Math.min(1, tl.tempoStrength * 4);
+      if (i !== this.lastTimelineBeat && i >= 0) {
+        this.lastTimelineBeat = i;
+        f.beat = true;
+        f.beatStrength = Math.max(f.beatStrength, 0.7);
+        f.beatPulse = Math.max(f.beatPulse, 0.9);
+      }
+    }
+
+    // Future awareness: time until the next drop section begins.
+    f.nextDropIn = Infinity;
+    for (const s of tl.sections) {
+      if (s.drop && s.start > t - 0.25) {
+        f.nextDropIn = Math.max(0, s.start - t);
+        break;
+      }
+    }
   }
 
   private detectBeat(bassNow: number, rmsNow: number, dt: number): void {

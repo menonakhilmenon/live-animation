@@ -81,10 +81,50 @@ function stats(arr) {
 
   console.log('--- 3. Load WAV through file input');
   await page.setInputFiles('#file-input', WAV);
-  await page.waitForTimeout(2500);
+  // Offline analysis lands within a second of the file being selected.
+  const timeline = await page
+    .waitForFunction(() => window.__app.audio.timeline, null, { timeout: 10000 })
+    .then(() =>
+      page.evaluate(() => {
+        const tl = window.__app.audio.timeline;
+        return {
+          bpm: tl.bpm,
+          tempoStrength: tl.tempoStrength,
+          beats: tl.beats,
+          downbeatOffset: tl.downbeatOffset,
+          sections: tl.sections,
+          mode: tl.mode,
+        };
+      }),
+    );
+  console.log(
+    'timeline: mode=%s bpm=%s strength=%s beats=%d sections=%j',
+    timeline.mode,
+    timeline.bpm.toFixed(1),
+    timeline.tempoStrength.toFixed(2),
+    timeline.beats.length,
+    timeline.sections.map((s) => `${s.level}${s.drop ? '(drop)' : ''}@${s.start.toFixed(1)}`),
+  );
 
+  // Beat-grid accuracy vs the authored kick grid (kicks at n*0.5 s).
+  const gridErrs = timeline.beats.map((b) => Math.abs(b - Math.round(b / 0.5) * 0.5));
+  gridErrs.sort((a, b) => a - b);
+  const medianGridErr = gridErrs[Math.floor(gridErrs.length / 2)] ?? 1;
+  // Downbeat accuracy: downbeat-offset beats should sit on 2 s bar lines.
+  const downbeats = timeline.beats.filter((_, i) => i % 4 === timeline.downbeatOffset % 4);
+  const dbErrs = downbeats.map((b) => Math.abs(b - Math.round(b / 2) * 2)).sort((a, b) => a - b);
+  const medianDbErr = dbErrs[Math.floor(dbErrs.length / 2)] ?? 1;
+  const dropSection = timeline.sections.find((s) => s.drop);
+  console.log(
+    'beat grid: median err=%sms  downbeat median err=%sms  drop at %s',
+    (medianGridErr * 1000).toFixed(1),
+    (medianDbErr * 1000).toFixed(1),
+    dropSection ? dropSection.start.toFixed(2) + 's' : 'NONE',
+  );
+
+  await page.waitForTimeout(2000);
   const during = [];
-  for (let i = 0; i < 24; i++) {
+  for (let i = 0; i < 40; i++) {
     during.push(await sample());
     await page.waitForTimeout(125);
   }
@@ -98,12 +138,14 @@ function stats(arr) {
   const pulse = stats(during.map((s) => s.f.beatPulse));
   const hips = stats(during.map((s) => s.hipsY));
   const arm = stats(during.map((s) => s.armX));
-  const beatsSeen = during.filter((s) => s.f.timeSinceBeat < 0.6).length;
+  const beatsSeen = during.filter((s) => s.f.timeSinceBeat < 0.6 || s.f.beatPulse > 0.05).length;
+  const sectionRise = during[during.length - 1].f.section - during[0].f.section;
+  console.log('section feature: first=%s last=%s (drop crossed)', during[0].f.section.toFixed(2), during[during.length - 1].f.section.toFixed(2));
   const lastBpm = last.f.bpm;
   const lastConf = last.f.tempoConfidence;
   const phaseAdvanced = last.f.beatPhase - during[0].f.beatPhase;
   console.log('rms max=%s  bass max=%s  beatPulse max=%s', rms.max.toFixed(4), bass.max.toFixed(4), pulse.max.toFixed(3));
-  console.log('samples with a recent beat: %d/24', beatsSeen);
+  console.log('samples with a recent beat: %d/40', beatsSeen);
   console.log('tempo: %s BPM  confidence=%s  phase advanced %s beats', lastBpm.toFixed(1), lastConf.toFixed(2), phaseAdvanced.toFixed(1));
   const footDrift = Math.max(
     stats(during.map((s) => s.footWorld.x)).range,
@@ -135,6 +177,17 @@ function stats(arr) {
     await page.click('#btn-character'); // back to the model
   }
 
+  console.log('--- 4.7 Speech classification');
+  await page.setInputFiles('#file-input', path.join(ART, 'speech.wav'));
+  const speechMode = await page
+    .waitForFunction(
+      () => window.__app.audio.timeline && window.__app.audio.timeline.duration < 10,
+      null,
+      { timeout: 10000 },
+    )
+    .then(() => page.evaluate(() => window.__app.audio.timeline.mode));
+  console.log('speech.wav classified as: %s', speechMode);
+
   console.log('--- 5. Console errors: %d', consoleErrors.length);
   consoleErrors.slice(0, 10).forEach((e) => console.log('  ERR:', e));
 
@@ -143,7 +196,15 @@ function stats(arr) {
   if (rms.max < 0.05) failures.push('rms never rose during playback');
   if (bass.max < 0.1) failures.push('bass energy never registered');
   if (pulse.max < 0.5) failures.push('no beat pulse detected');
-  if (beatsSeen < 4) failures.push('too few beats detected');
+  if (beatsSeen < 8) failures.push('too few beats detected');
+  // Offline timeline accuracy (test.wav ground truth).
+  if (timeline.mode !== 'music') failures.push(`test.wav classified as ${timeline.mode}, expected music`);
+  if (Math.abs(timeline.bpm - 120) > 3) failures.push(`timeline BPM ${timeline.bpm.toFixed(1)}, expected ~120`);
+  if (medianGridErr > 0.04) failures.push(`beat grid median error ${(medianGridErr * 1000).toFixed(0)}ms > 40ms`);
+  if (medianDbErr > 0.06) failures.push(`downbeat median error ${(medianDbErr * 1000).toFixed(0)}ms > 60ms`);
+  if (!dropSection) failures.push('no drop section detected');
+  else if (Math.abs(dropSection.start - 6) > 1.2) failures.push(`drop at ${dropSection.start.toFixed(1)}s, expected ~6s`);
+  if (sectionRise < 0.25) failures.push(`section feature did not rise across the drop (${sectionRise.toFixed(2)})`);
   if (hips.range < 0.01) failures.push('hips did not bounce');
   // Foot IK: while the hips move, the planted foot should stay put (meters).
   if (footDrift > 0.03) failures.push(`foot slid ${footDrift.toFixed(3)}m despite IK pinning`);
@@ -158,6 +219,7 @@ function stats(arr) {
   if (arm.range < 0.05) failures.push('arms did not move');
   if (mic.f.rms < 0.005) failures.push('mic (fake device) produced no signal');
   if (!toggleOk) failures.push('character toggle did not switch rigs');
+  if (speechMode !== 'speech') failures.push(`speech.wav classified as ${speechMode}, expected speech`);
   if (consoleErrors.length) failures.push(consoleErrors.length + ' console errors');
 
   console.log(failures.length ? 'RESULT: FAIL — ' + failures.join('; ') : 'RESULT: PASS');

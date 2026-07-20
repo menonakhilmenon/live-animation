@@ -57,11 +57,16 @@ export class Animator {
   /** World-space rest pose of each foot — the ground-contact IK targets. */
   private footAnchors: { pos: THREE.Vector3; quat: THREE.Quaternion }[] | null = null;
 
-  /** Arm move rotation: switches on 4-beat phrase boundaries when locked. */
+  /** Arm move rotation: switches on bar boundaries when locked. */
   private moveIndex = 0;
   private movePrev = 0;
   private moveBlend = 1;
   private lastPhrase = -1;
+
+  /** Drop anticipation state. */
+  private windup = new Spring(0, 20);
+  private prevDropIn = Infinity;
+  private hitTimer = 0;
 
   /** Current arm move (exposed for tests/debug). */
   get currentMove(): number {
@@ -76,7 +81,27 @@ export class Animator {
 
     // Sustained intensity (slow spring) gates most layers so the character
     // relaxes to idle in silence and commits to the groove on loud sections.
-    const energy = this.energy.update(Math.min(1, f.rms * 3 + f.beatPulse * 0.3), dt);
+    // Song-section loudness scales the target: subdued verses, big choruses.
+    const energy = this.energy.update(
+      Math.min(1, (f.rms * 3 + f.beatPulse * 0.3) * (0.45 + 0.75 * f.section)),
+      dt,
+    );
+
+    // Drop anticipation: crouch in during the last ~1.2 s before a known
+    // drop, then release into a hit pose right as it lands.
+    const windup = this.windup.update(
+      f.nextDropIn < 1.2 ? smoothstep(0, 1.05, 1.2 - f.nextDropIn) : 0,
+      dt,
+    );
+    if (this.prevDropIn < 0.2 && !(f.nextDropIn < 0.2)) {
+      this.hitTimer = 1.2; // the drop just landed
+      this.movePrev = this.moveIndex;
+      this.moveIndex = 2; // raised groove hit
+      this.moveBlend = 0;
+    }
+    this.prevDropIn = f.nextDropIn;
+    this.hitTimer = Math.max(0, this.hitTimer - dt);
+    const hit = smoothstep(0, 0.25, this.hitTimer);
 
     // Style crossfade weights (calm + groove + hype = 1).
     const wHype = smoothstep(0.55, 0.8, energy);
@@ -113,10 +138,11 @@ export class Animator {
     const phasedPulse = Math.pow(Math.max(0, Math.cos(2 * Math.PI * frac)), 3);
     const pulse = lock * phasedPulse * Math.min(1, energy * 2) + (1 - lock) * f.beatPulse;
 
-    // Rotate to the next arm move each 4-beat phrase (only while locked and
-    // moving — calm idling stays on the pendulum swing).
-    const phrase = Math.floor(f.beatPhase / 4);
-    if (lock > 0.5 && phrase !== this.lastPhrase) {
+    // Rotate to the next arm move each bar — with an offline timeline the
+    // bar phase is downbeat-aligned, so changes land on real musical
+    // boundaries. Calm idling stays on the pendulum swing.
+    const phrase = Math.floor(f.barPhase);
+    if (lock > 0.5 && phrase !== this.lastPhrase && this.hitTimer <= 0) {
       if (this.lastPhrase >= 0 && energy > 0.35) {
         this.movePrev = this.moveIndex;
         this.moveIndex = (this.moveIndex + 1) % 4;
@@ -127,7 +153,10 @@ export class Animator {
     this.moveBlend = Math.min(1, this.moveBlend + dt / 0.45);
     const blend = smoothstep(0, 1, this.moveBlend);
 
-    const bounce = this.bounce.update((pulse * 0.09 + f.bass * 0.03) * S.bounce, dt);
+    const bounce = this.bounce.update(
+      (pulse * 0.09 + f.bass * 0.03) * S.bounce * (1 + hit * 0.5) + windup * 0.055,
+      dt,
+    );
     const nod = this.headNod.update(pulse, dt);
     const raise = this.armRaise.update(Math.max(0, energy - 0.45) * 1.8, dt);
     const side = this.sideStep.update(this.weightSide * Math.min(1, energy * 1.4) * S.sway, dt);
@@ -174,6 +203,8 @@ export class Animator {
     j.spine.rotation.y += Math.sin(this.groovePhase) * 0.1 * energy;
 
     // --- Head ---
+    // Wind-up: head tucks slightly, then snaps up on the hit.
+    j.head.rotation.x += windup * 0.22 - hit * 0.15;
     j.head.rotation.x += nod * S.nod + Math.sin(this.t * 2.3) * 0.02;
     j.head.rotation.z -= side * 0.1;
     // Brightness tilts the head up slightly on bright/airy audio.
@@ -204,9 +235,9 @@ export class Animator {
       const osc = Math.sin(this.groovePhase + (s === 'left' ? 0 : Math.PI));
       const cur = armPose(this.moveIndex, osc);
       const prev = armPose(this.movePrev, osc);
-      const swingA = prev[0] + (cur[0] - prev[0]) * blend;
-      const abductA = prev[1] + (cur[1] - prev[1]) * blend;
-      const flexA = (prev[2] + (cur[2] - prev[2]) * blend + nod * 0.25) * S.elbows;
+      const swingA = prev[0] + (cur[0] - prev[0]) * blend - windup * 0.1;
+      const abductA = prev[1] + (cur[1] - prev[1]) * blend - windup * 0.25;
+      const flexA = (prev[2] + (cur[2] - prev[2]) * blend + nod * 0.25) * S.elbows + windup * 0.55;
 
       const axes = r.armAxes[s];
       j[`${s}UpperArm`].rotateOnAxis(axes.swing, swingA);

@@ -7,20 +7,29 @@ export function setupUI(engine: AudioEngine): void {
   const fileInput = document.getElementById('file-input') as HTMLInputElement;
   const audioEl = document.getElementById('audio-el') as HTMLAudioElement;
 
-  let mediaElementConnected = false;
-
   fileBtn.addEventListener('click', () => fileInput.click());
+
+  const analysisLabel = document.getElementById('analysis-label')!;
 
   fileInput.addEventListener('change', async () => {
     const file = fileInput.files?.[0];
     if (!file) return;
     audioEl.src = URL.createObjectURL(file);
     audioEl.hidden = false;
-    // createMediaElementSource can only be called once per element.
-    if (!mediaElementConnected) {
-      await engine.useMediaElement(audioEl);
-      mediaElementConnected = true;
-    }
+    await engine.useMediaElement(audioEl);
+    // Offline whole-file analysis runs alongside playback start; the
+    // animator upgrades from causal tracking to the exact timeline the
+    // moment it lands (typically well under a second).
+    analysisLabel.textContent = 'analyzing…';
+    engine
+      .analyzeFile(file, audioEl)
+      .then((tl) => {
+        analysisLabel.textContent = `${tl.mode} · ${tl.bpm ? tl.bpm.toFixed(0) + ' BPM · ' : ''}${tl.sections.length} section${tl.sections.length === 1 ? '' : 's'}`;
+      })
+      .catch((err) => {
+        console.warn('offline analysis failed:', err);
+        analysisLabel.textContent = 'analysis failed (live tracking)';
+      });
     await audioEl.play();
     fileBtn.classList.add('active');
     micBtn.classList.remove('active');
@@ -30,7 +39,6 @@ export function setupUI(engine: AudioEngine): void {
     try {
       audioEl.pause();
       await engine.useMicrophone();
-      mediaElementConnected = false; // source node was replaced
       micBtn.classList.add('active');
       fileBtn.classList.remove('active');
     } catch (err) {
