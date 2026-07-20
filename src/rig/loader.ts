@@ -77,9 +77,15 @@ export async function loadGLBRig(url: string): Promise<HumanoidRig> {
     throw new Error(`loadGLBRig(${url}): unmapped joints: ${missing.join(', ')}`);
   }
 
-  // Calibrate: lower the arms from the T-pose so "rest" means relaxed.
-  // Mixamo bones point +Y along the limb; rotating the upper arm about its
-  // local Z swings it down in the coronal plane.
+  return finalizeRig(root, joints);
+}
+
+/**
+ * Shared skeleton adaptation for loaded models (GLB, VRM): lower the
+ * T-pose arms so "rest" means relaxed, compute the meters→local-units
+ * position scale, probe per-rig arm axes, and capture the rest pose.
+ */
+export function finalizeRig(root: THREE.Group, joints: Record<JointName, THREE.Object3D>): HumanoidRig {
   root.updateMatrixWorld(true);
   calibrateArmsDown(joints);
 

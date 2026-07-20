@@ -12,6 +12,7 @@
     "fetch:model": "node scripts/fetch-model.mjs"
   },
   "dependencies": {
+    "@pixiv/three-vrm": "^3.5.5",
     "three": "^0.166.0"
   },
   "devDependencies": {

@@ -4,6 +4,7 @@ import { AudioEngine } from './audio/engine';
 import { Animator } from './animation/animator';
 import { createHumanoid } from './rig/humanoid';
 import { loadGLBRig } from './rig/loader';
+import { loadVRMRig } from './rig/vrm';
 import { setupUI, updateMeters } from './ui';
 
 const container = document.getElementById('app')!;
@@ -56,42 +57,60 @@ const grid = new THREE.GridHelper(12, 24, 0x2a3442, 0x1c2530);
 scene.add(grid);
 
 // --- Rig + systems ---
+const audio = new AudioEngine();
 const capsuleRig = createHumanoid();
 scene.add(capsuleRig.root);
 
-const audio = new AudioEngine();
+interface RigEntry {
+  name: string;
+  rig: ReturnType<typeof createHumanoid>;
+}
+const rigs: RigEntry[] = [{ name: 'capsule', rig: capsuleRig }];
+let rigIdx = 0;
 let activeRig = capsuleRig;
 let animator = new Animator(activeRig);
 setupUI(audio);
 
-const setActiveRig = (rig: typeof capsuleRig) => {
-  activeRig = rig;
-  animator = new Animator(rig);
+const charBtn = document.getElementById('btn-character') as HTMLButtonElement;
+
+const setActiveRig = (idx: number) => {
+  rigIdx = idx;
+  activeRig = rigs[idx].rig;
+  animator = new Animator(activeRig);
+  for (const [i, entry] of rigs.entries()) entry.rig.root.visible = i === idx;
+  charBtn.textContent = `Character: ${rigs[idx].name}`;
+  charBtn.hidden = rigs.length < 2;
   if (import.meta.env.DEV) {
-    (window as unknown as Record<string, unknown>).__app = { rig, audio, animator };
+    (window as unknown as Record<string, unknown>).__app = {
+      rig: activeRig,
+      audio,
+      animator,
+      rigCount: rigs.length,
+    };
   }
 };
+setActiveRig(0);
 
-// Load the real character model if present (see README: npm run fetch:model).
-// Falls back silently to the capsule rig when the GLB is missing.
+charBtn.addEventListener('click', () => setActiveRig((rigIdx + 1) % rigs.length));
+
+// Load optional character models (see README: npm run fetch:model). Each
+// falls back silently when its file is absent. The VRM avatar is preferred
+// when available — it's the only rig with facial expressions.
 loadGLBRig('/models/Xbot.glb')
-  .then((glbRig) => {
-    scene.add(glbRig.root);
-    capsuleRig.root.visible = false;
-    setActiveRig(glbRig);
-
-    const btn = document.getElementById('btn-character') as HTMLButtonElement;
-    btn.hidden = false;
-    btn.textContent = 'Character: model';
-    btn.addEventListener('click', () => {
-      const useCapsule = activeRig === glbRig;
-      capsuleRig.root.visible = useCapsule;
-      glbRig.root.visible = !useCapsule;
-      setActiveRig(useCapsule ? capsuleRig : glbRig);
-      btn.textContent = useCapsule ? 'Character: capsule' : 'Character: model';
-    });
+  .then((rig) => {
+    scene.add(rig.root);
+    rigs.push({ name: 'model', rig });
+    setActiveRig(rigs[rigIdx].name === 'capsule' ? rigs.length - 1 : rigIdx);
   })
-  .catch((err) => console.warn('No character model loaded, using capsule rig:', err.message));
+  .catch((err) => console.warn('No GLB model loaded:', err.message));
+
+loadVRMRig('/models/avatar.vrm')
+  .then((rig) => {
+    scene.add(rig.root);
+    rigs.push({ name: 'avatar', rig });
+    setActiveRig(rigs.length - 1);
+  })
+  .catch((err) => console.warn('No VRM avatar loaded:', err.message));
 
 // --- Loop ---
 const clock = new THREE.Clock();
@@ -103,11 +122,6 @@ renderer.setAnimationLoop(() => {
   controls.update();
   renderer.render(scene, camera);
 });
-
-// Dev-only hook so automated tests can sample the rig and audio features.
-if (import.meta.env.DEV) {
-  (window as unknown as Record<string, unknown>).__app = { rig: activeRig, audio, animator };
-}
 
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;

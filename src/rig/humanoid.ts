@@ -48,6 +48,24 @@ export interface HumanoidRig {
   positionScale: number;
   /** Probed arm rotation axes (see src/rig/axes.ts). */
   armAxes: { left: ArmAxes; right: ArmAxes };
+  /** Facial expression driver, when the model has one (VRM). */
+  face?: FaceDriver;
+  /** Per-frame hook for rigs needing runtime updates (e.g. vrm.update). */
+  tick?: (dt: number) => void;
+}
+
+/**
+ * Normalized facial controls (all 0–1). Backed by VRM expressions when
+ * available; rigs without a face simply omit the driver.
+ */
+export interface FaceDriver {
+  /** Mouth visemes for lip sync. */
+  setMouth(aa: number, ih: number, ou: number): void;
+  setBlink(v: number): void;
+  /** Emotional blend: positive = happy, negative = serious/relaxed. */
+  setMood(v: number): void;
+  /** Current values, for tests/debug. */
+  debug(): Record<string, number>;
 }
 
 const BONE_MAT = new THREE.MeshStandardMaterial({ color: 0x9fb4cc, roughness: 0.55 });

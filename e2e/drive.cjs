@@ -44,7 +44,11 @@ function stats(arr) {
     .waitForFunction(() => !document.getElementById('btn-character').hidden, null, { timeout: 15000 })
     .then(() => true)
     .catch(() => false);
-  console.log('character model loaded:', hasModel);
+  const rigCount = await page
+    .waitForFunction(() => window.__app.rigCount >= 3, null, { timeout: 20000 })
+    .then(() => page.evaluate(() => window.__app.rigCount))
+    .catch(() => page.evaluate(() => window.__app.rigCount ?? 1));
+  console.log('character model loaded: %s  rigs available: %d', hasModel, rigCount);
   await page.waitForTimeout(1500);
   await page.screenshot({ path: path.join(ART, '01-idle.png') });
   console.log('canvas present, __app hook present');
@@ -177,7 +181,15 @@ function stats(arr) {
     await page.click('#btn-character'); // back to the model
   }
 
-  console.log('--- 4.7 Speech classification');
+  console.log('--- 4.7 Speech classification + facial animation');
+  // Switch to the VRM avatar (the rig with a face) before speech playback.
+  for (let i = 0; i < 4; i++) {
+    const hasFace = await page.evaluate(() => !!window.__app.rig.face);
+    if (hasFace) break;
+    await page.click('#btn-character');
+    await page.waitForTimeout(200);
+  }
+  const onFaceRig = await page.evaluate(() => !!window.__app.rig.face);
   await page.setInputFiles('#file-input', path.join(ART, 'speech.wav'));
   const speechMode = await page
     .waitForFunction(
@@ -186,7 +198,23 @@ function stats(arr) {
       { timeout: 10000 },
     )
     .then(() => page.evaluate(() => window.__app.audio.timeline.mode));
-  console.log('speech.wav classified as: %s', speechMode);
+  console.log('speech.wav classified as: %s  on face-capable rig: %s', speechMode, onFaceRig);
+
+  // Sample the face for ~3 s of speech playback.
+  let faceStats = { maxMouth: 0, blinkCount: 0, mood: 0 };
+  if (onFaceRig) {
+    for (let i = 0; i < 30; i++) {
+      const d = await page.evaluate(() => window.__app.animator.faceAnimator?.debug() ?? null);
+      if (d) {
+        faceStats.maxMouth = Math.max(faceStats.maxMouth, d.aa + d.ih + d.ou);
+        faceStats.blinkCount = d.blinkCount;
+        faceStats.mood = d.mood;
+      }
+      await page.waitForTimeout(100);
+    }
+    console.log('face: max mouth=%s blinks=%d mood=%s', faceStats.maxMouth.toFixed(2), faceStats.blinkCount, faceStats.mood.toFixed(2));
+    await page.screenshot({ path: path.join(ART, '05-vrm-speech.png') });
+  }
 
   console.log('--- 5. Console errors: %d', consoleErrors.length);
   consoleErrors.slice(0, 10).forEach((e) => console.log('  ERR:', e));
@@ -220,6 +248,13 @@ function stats(arr) {
   if (mic.f.rms < 0.005) failures.push('mic (fake device) produced no signal');
   if (!toggleOk) failures.push('character toggle did not switch rigs');
   if (speechMode !== 'speech') failures.push(`speech.wav classified as ${speechMode}, expected speech`);
+  if (rigCount >= 3) {
+    if (!onFaceRig) failures.push('could not switch to a face-capable rig');
+    else {
+      if (faceStats.maxMouth < 0.1) failures.push(`lip sync silent during speech (max mouth ${faceStats.maxMouth.toFixed(2)})`);
+      if (faceStats.blinkCount < 1) failures.push('never blinked during 3s of speech');
+    }
+  }
   if (consoleErrors.length) failures.push(consoleErrors.length + ' console errors');
 
   console.log(failures.length ? 'RESULT: FAIL — ' + failures.join('; ') : 'RESULT: PASS');

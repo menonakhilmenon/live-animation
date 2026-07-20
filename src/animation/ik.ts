@@ -24,7 +24,7 @@ export function pinEffector(
   joints: THREE.Object3D[],
   effector: THREE.Object3D,
   targetWorld: THREE.Vector3,
-  iterations = 6,
+  iterations = 12,
 ): void {
   for (let iter = 0; iter < iterations; iter++) {
     // Innermost joint first (knee), then hip.

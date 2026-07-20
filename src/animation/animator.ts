@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { AudioFeatures } from '../audio/features';
 import { HumanoidRig, resetToRest } from '../rig/humanoid';
+import { FaceAnimator } from './face';
 import { pinEffector, setWorldQuaternion } from './ik';
 import { Spring } from './spring';
 
@@ -73,7 +74,11 @@ export class Animator {
     return this.moveIndex;
   }
 
-  constructor(private rig: HumanoidRig) {}
+  readonly faceAnimator: FaceAnimator | null;
+
+  constructor(private rig: HumanoidRig) {
+    this.faceAnimator = rig.face ? new FaceAnimator(rig.face) : null;
+  }
 
   update(f: AudioFeatures, dt: number): void {
     dt = Math.min(dt, 1 / 20); // avoid spring blow-ups on tab-switch stalls
@@ -256,5 +261,9 @@ export class Animator {
       pinEffector([j[`${s}LowerLeg`], j[`${s}UpperLeg`]], j[`${s}Foot`], anchor.pos);
       setWorldQuaternion(j[`${s}Foot`], anchor.quat);
     }
+
+    // --- Face (models with expression support) ---
+    this.faceAnimator?.update(f, dt);
+    this.rig.tick?.(dt);
   }
 }
