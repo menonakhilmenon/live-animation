@@ -52,13 +52,22 @@ function stats(arr) {
   const sample = () =>
     page.evaluate(() => {
       const { rig, audio } = window.__app;
-      const foot = new (rig.root.position.constructor)();
+      const V = rig.root.position.constructor;
+      const foot = new V();
       rig.joints.leftFoot.getWorldPosition(foot);
+      // Interior elbow angle (PI = straight arm) from world joint positions.
+      const sh = new V(), el = new V(), wr = new V();
+      rig.joints.leftUpperArm.getWorldPosition(sh);
+      rig.joints.leftLowerArm.getWorldPosition(el);
+      rig.joints.leftHand.getWorldPosition(wr);
+      const elbowAngle = sh.sub(el).angleTo(wr.sub(el));
       return {
         f: { ...audio.features },
         hipsY: rig.joints.hips.position.y,
         armX: rig.joints.leftUpperArm.rotation.x,
         footWorld: { x: foot.x, y: foot.y, z: foot.z },
+        move: window.__app.animator?.currentMove ?? -1,
+        elbowAngle,
         audioEl: (() => {
           const el = document.getElementById('audio-el');
           return { paused: el.paused, t: el.currentTime };
@@ -101,7 +110,10 @@ function stats(arr) {
     stats(during.map((s) => s.footWorld.y)).range,
     stats(during.map((s) => s.footWorld.z)).range,
   );
+  const movesSeen = [...new Set(during.map((s) => s.move))];
+  const minElbow = Math.min(...during.map((s) => s.elbowAngle));
   console.log('hipsY range=%s  armX range=%s  foot drift=%sm', hips.range.toFixed(4), arm.range.toFixed(4), footDrift.toFixed(4));
+  console.log('arm moves seen: %j  min elbow angle=%s rad', movesSeen, minElbow.toFixed(2));
 
   console.log('--- 4. Microphone path (fake device)');
   await page.click('#btn-mic');
@@ -135,6 +147,10 @@ function stats(arr) {
   if (hips.range < 0.01) failures.push('hips did not bounce');
   // Foot IK: while the hips move, the planted foot should stay put (meters).
   if (footDrift > 0.03) failures.push(`foot slid ${footDrift.toFixed(3)}m despite IK pinning`);
+  // Choreography should rotate through at least one phrase switch in-window.
+  if (movesSeen.length < 2) failures.push(`arm move never changed (saw ${JSON.stringify(movesSeen)})`);
+  // Elbows must visibly bend at some point (straight arm = PI ≈ 3.14 rad).
+  if (minElbow > 2.6) failures.push(`elbow never bent (min interior angle ${minElbow.toFixed(2)} rad)`);
   // The test WAV is authored at exactly 120 BPM.
   if (Math.abs(lastBpm - 120) > 6) failures.push(`tempo estimate off: ${lastBpm.toFixed(1)} BPM (expected ~120)`);
   if (lastConf < 0.6) failures.push(`tempo confidence low: ${lastConf.toFixed(2)}`);

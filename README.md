@@ -40,6 +40,10 @@ Animator (src/animation/animator.ts)
   amplitudes crossfade with sustained energy: calm sway → groove → hype
   Foot IK (src/animation/ik.ts): rig-agnostic CCD pins the feet to their
   ground rest positions while hips bounce and sway
+  Choreography: four arm moves (pendulum, beat pump, raised groove, side
+  sway) rotate on 4-beat phrase boundaries with crossfades; arm rotations
+  use per-rig axes probed at load time (src/rig/axes.ts), so moves are
+  authored once in world-space semantics and work on any skeleton
       │
       ▼
 HumanoidRig (src/rig/humanoid.ts, src/rig/loader.ts)

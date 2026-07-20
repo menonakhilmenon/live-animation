@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { probeArmAxes } from './axes';
 import { HumanoidRig, JointName, RestPose } from './humanoid';
 
 /**
@@ -88,6 +89,10 @@ export async function loadGLBRig(url: string): Promise<HumanoidRig> {
   joints.hips.parent?.getWorldScale(parentScale);
   const positionScale = 1 / Math.max(parentScale.y, 1e-6);
 
+  // Probe arm axes in the calibrated (arms-down) pose; the probe restores
+  // any rotations it applies, so the rest capture below is unaffected.
+  const armAxes = probeArmAxes({ root, joints });
+
   const rest = {} as Record<JointName, RestPose>;
   for (const key of Object.keys(joints) as JointName[]) {
     rest[key] = {
@@ -96,7 +101,7 @@ export async function loadGLBRig(url: string): Promise<HumanoidRig> {
     };
   }
 
-  return { root, joints, rest, positionScale };
+  return { root, joints, rest, positionScale, armAxes };
 }
 
 function calibrateArmsDown(joints: Record<JointName, THREE.Object3D>): void {

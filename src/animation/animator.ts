@@ -57,6 +57,17 @@ export class Animator {
   /** World-space rest pose of each foot — the ground-contact IK targets. */
   private footAnchors: { pos: THREE.Vector3; quat: THREE.Quaternion }[] | null = null;
 
+  /** Arm move rotation: switches on 4-beat phrase boundaries when locked. */
+  private moveIndex = 0;
+  private movePrev = 0;
+  private moveBlend = 1;
+  private lastPhrase = -1;
+
+  /** Current arm move (exposed for tests/debug). */
+  get currentMove(): number {
+    return this.moveIndex;
+  }
+
   constructor(private rig: HumanoidRig) {}
 
   update(f: AudioFeatures, dt: number): void {
@@ -101,6 +112,20 @@ export class Animator {
     const frac = f.beatPhase - Math.floor(f.beatPhase);
     const phasedPulse = Math.pow(Math.max(0, Math.cos(2 * Math.PI * frac)), 3);
     const pulse = lock * phasedPulse * Math.min(1, energy * 2) + (1 - lock) * f.beatPulse;
+
+    // Rotate to the next arm move each 4-beat phrase (only while locked and
+    // moving — calm idling stays on the pendulum swing).
+    const phrase = Math.floor(f.beatPhase / 4);
+    if (lock > 0.5 && phrase !== this.lastPhrase) {
+      if (this.lastPhrase >= 0 && energy > 0.35) {
+        this.movePrev = this.moveIndex;
+        this.moveIndex = (this.moveIndex + 1) % 4;
+        this.moveBlend = 0;
+      }
+      this.lastPhrase = phrase;
+    }
+    this.moveBlend = Math.min(1, this.moveBlend + dt / 0.45);
+    const blend = smoothstep(0, 1, this.moveBlend);
 
     const bounce = this.bounce.update((pulse * 0.09 + f.bass * 0.03) * S.bounce, dt);
     const nod = this.headNod.update(pulse, dt);
@@ -154,20 +179,40 @@ export class Animator {
     // Brightness tilts the head up slightly on bright/airy audio.
     j.neck.rotation.x -= f.brightness * 0.12;
 
-    // --- Arms: pendulum swing scaled by energy, raised by sustained energy ---
-    for (const [s, sign] of [['left', 1], ['right', -1]] as const) {
-      const swing = Math.sin(this.groovePhase + (sign === 1 ? 0 : Math.PI));
-      const upper = j[`${s}UpperArm`];
-      const lower = j[`${s}LowerArm`];
+    // --- Arms: a small move repertoire, crossfaded on phrase boundaries ---
+    // Each move returns [swing, abduct, flex] in canonical semantics
+    // (positive = hand forward / arm out / elbow bend); the rig's probed
+    // axes translate those into whatever local frames the skeleton uses.
+    const armPose = (move: number, osc: number): [number, number, number] => {
+      switch (move) {
+        case 1: // beat pump: elbows bent, forearms punch with the pulse
+          return [0.35 + pulse * 0.25, 0.3, 1.35 + pulse * 0.6];
+        case 2: // raised groove: arms up, swaying with the phase
+          return [0.3 + osc * 0.25, 1.5 + osc * 0.15, 0.55 + Math.max(0, osc) * 0.4];
+        case 3: // side sway: arms hang, swinging laterally with the hips
+          return [osc * 0.15, 0.18 + Math.sin(this.groovePhase) * 0.3, 0.25 + energy * 0.4];
+        default: // pendulum swing (also the calm/unlocked fallback)
+          return [
+            osc * (0.12 + energy * 0.45) * S.arms + raise * 0.4,
+            0.08 + raise * 1.5,
+            0.15 + energy * 0.9 + Math.max(0, -osc) * 0.35 * energy,
+          ];
+      }
+    };
 
-      // Rest: arms hang down. Abduct outward with raise, swing forward/back
-      // with the groove, bend elbows more as energy rises.
-      upper.rotation.z += sign * (0.08 + raise * 1.5);
-      upper.rotation.x += swing * (0.12 + energy * 0.45) * S.arms - raise * 0.4;
-      lower.rotation.x -= (0.15 + energy * 0.9 + Math.max(0, -swing) * 0.35 * energy) * S.elbows;
-      lower.rotation.x += nod * 0.25 * S.elbows; // elbows pump on the beat
+    for (const s of ['left', 'right'] as const) {
+      const osc = Math.sin(this.groovePhase + (s === 'left' ? 0 : Math.PI));
+      const cur = armPose(this.moveIndex, osc);
+      const prev = armPose(this.movePrev, osc);
+      const swingA = prev[0] + (cur[0] - prev[0]) * blend;
+      const abductA = prev[1] + (cur[1] - prev[1]) * blend;
+      const flexA = (prev[2] + (cur[2] - prev[2]) * blend + nod * 0.25) * S.elbows;
 
-      j[`${s}Hand`].rotation.x -= energy * 0.3;
+      const axes = r.armAxes[s];
+      j[`${s}UpperArm`].rotateOnAxis(axes.swing, swingA);
+      j[`${s}UpperArm`].rotateOnAxis(axes.abduct, abductA);
+      j[`${s}LowerArm`].rotateOnAxis(axes.flex, flexA);
+      j[`${s}Hand`].rotateOnAxis(axes.flex, energy * 0.3);
     }
 
     // Shoulders shrug slightly with treble (hi-hats, snares).

@@ -68,7 +68,7 @@ const setActiveRig = (rig: typeof capsuleRig) => {
   activeRig = rig;
   animator = new Animator(rig);
   if (import.meta.env.DEV) {
-    (window as unknown as Record<string, unknown>).__app = { rig, audio };
+    (window as unknown as Record<string, unknown>).__app = { rig, audio, animator };
   }
 };
 
@@ -106,7 +106,7 @@ renderer.setAnimationLoop(() => {
 
 // Dev-only hook so automated tests can sample the rig and audio features.
 if (import.meta.env.DEV) {
-  (window as unknown as Record<string, unknown>).__app = { rig: activeRig, audio };
+  (window as unknown as Record<string, unknown>).__app = { rig: activeRig, audio, animator };
 }
 
 window.addEventListener('resize', () => {

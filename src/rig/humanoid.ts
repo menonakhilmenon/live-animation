@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { ArmAxes, probeArmAxes } from './axes';
 
 /**
  * Joint names follow the VRM/Mixamo humanoid convention so a loaded GLB rig
@@ -45,6 +46,8 @@ export interface HumanoidRig {
    * Mixamo skeletons under a 0.01-scaled armature).
    */
   positionScale: number;
+  /** Probed arm rotation axes (see src/rig/axes.ts). */
+  armAxes: { left: ArmAxes; right: ArmAxes };
 }
 
 const BONE_MAT = new THREE.MeshStandardMaterial({ color: 0x9fb4cc, roughness: 0.55 });
@@ -207,7 +210,7 @@ export function createHumanoid(): HumanoidRig {
     };
   }
 
-  return { root, joints, rest, positionScale: 1 };
+  return { root, joints, rest, positionScale: 1, armAxes: probeArmAxes({ root, joints }) };
 }
 
 /** Reset every joint to its captured rest pose (call before applying layers). */
