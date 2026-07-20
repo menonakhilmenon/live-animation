@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import { probeArmAxes } from './axes';
+import { probeArmAxes, probeAxis } from './axes';
 import { HumanoidRig, JointName, RestPose } from './humanoid';
 
 /**
@@ -87,7 +87,7 @@ export async function loadGLBRig(url: string): Promise<HumanoidRig> {
  */
 export function finalizeRig(root: THREE.Group, joints: Record<JointName, THREE.Object3D>): HumanoidRig {
   root.updateMatrixWorld(true);
-  calibrateArmsDown(joints);
+  calibrateArmsDown(root, joints);
 
   // Positional offsets from the animator are in meters (world space); convert
   // to hips-local units via the inverse world scale of the hips' parent.
@@ -110,14 +110,21 @@ export function finalizeRig(root: THREE.Group, joints: Record<JointName, THREE.O
   return { root, joints, rest, positionScale, armAxes };
 }
 
-function calibrateArmsDown(joints: Record<JointName, THREE.Object3D>): void {
-  for (const [upper, sign] of [
-    ['leftUpperArm', 1],
-    ['rightUpperArm', -1],
-  ] as const) {
-    // Swing the arm ~65° down toward the body; a slight forearm bend keeps
-    // the pose from looking stiff.
-    joints[upper].rotateZ(sign * -1.15);
-    joints[upper === 'leftUpperArm' ? 'leftLowerArm' : 'rightLowerArm'].rotateZ(sign * -0.15);
+function calibrateArmsDown(root: THREE.Group, joints: Record<JointName, THREE.Object3D>): void {
+  const down = new THREE.Vector3(0, -1, 0);
+  for (const s of ['left', 'right'] as const) {
+    const upper = joints[`${s}UpperArm`];
+    const lower = joints[`${s}LowerArm`];
+    const hand = joints[`${s}Hand`];
+    // Swing the arm ~65° down toward the body around whichever local axis
+    // actually lowers the hand — bone frames differ per format (Mixamo Y-
+    // along-bone, VRM0 normalized bones under a 180° parent rotation, ...),
+    // so the axis is probed, not assumed.
+    upper.rotateOnAxis(probeAxis(root, upper, hand, down), 1.15);
+    root.updateMatrixWorld(true);
+    // A slight forward forearm bend keeps the pose from looking stiff
+    // (probed against +Z since "down" is degenerate for a hanging arm).
+    lower.rotateOnAxis(probeAxis(root, lower, hand, new THREE.Vector3(0, 0, 1)), 0.15);
+    root.updateMatrixWorld(true);
   }
 }

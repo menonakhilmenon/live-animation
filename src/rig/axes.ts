@@ -57,6 +57,19 @@ export function probeArmAxes(rig: Pick<HumanoidRig, 'root' | 'joints'>): {
   return result;
 }
 
+/**
+ * Find the local rotation axis of `joint` that moves `effector` furthest in
+ * `desiredWorldDir` (probed empirically; restores the joint's rotation).
+ */
+export function probeAxis(
+  root: THREE.Object3D,
+  joint: THREE.Object3D,
+  effector: THREE.Object3D,
+  desiredWorldDir: THREE.Vector3,
+): THREE.Vector3 {
+  return bestAxis(root, joint, effector, desiredWorldDir);
+}
+
 function bestAxis(
   root: THREE.Object3D,
   joint: THREE.Object3D,

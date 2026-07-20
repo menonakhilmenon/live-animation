@@ -58,6 +58,12 @@ export class Animator {
   /** World-space rest pose of each foot — the ground-contact IK targets. */
   private footAnchors: { pos: THREE.Vector3; quat: THREE.Quaternion }[] | null = null;
 
+  /** Co-speech gesture state: one beat-gesture envelope per hand. */
+  private gesture = { left: new Spring(0, 35), right: new Spring(0, 35) };
+  private gestureTarget = { left: 0, right: 0 };
+  private gestureCooldown = 0;
+  private gestureSide: 'left' | 'right' = 'right';
+
   /** Arm move rotation: switches on bar boundaries when locked. */
   private moveIndex = 0;
   private movePrev = 0;
@@ -184,10 +190,26 @@ export class Animator {
     // the rig's local units (see HumanoidRig.positionScale).
     const ps = r.positionScale;
 
-    // --- Breathing (idle layer) ---
+    // --- Breathing (always on) ---
     const breath = Math.sin(this.t * 1.9) * (0.02 - energy * 0.012);
     j.chest.rotation.x += breath;
     j.chest.position.y += breath * 0.15 * ps;
+
+    // --- Behavior dispatch ---
+    // speech → conversational gestures; near-silence → idle life;
+    // otherwise the dance path below.
+    const behavior =
+      f.mode === 'speech' ? 'speech' : f.rms < 0.02 && energy < 0.12 ? 'idle' : 'dance';
+    if (behavior === 'speech') {
+      this.speechLayers(f, dt);
+      this.finishFrame(f, dt);
+      return;
+    }
+    if (behavior === 'idle') {
+      this.idleLayers();
+      this.finishFrame(f, dt);
+      return;
+    }
 
     // --- Groove: bounce hips, flex knees to keep feet planted ---
     j.hips.position.y -= bounce * ps;
@@ -223,8 +245,8 @@ export class Animator {
       switch (move) {
         case 1: // beat pump: elbows bent, forearms punch with the pulse
           return [0.35 + pulse * 0.25, 0.3, 1.35 + pulse * 0.6];
-        case 2: // raised groove: arms up, swaying with the phase
-          return [0.3 + osc * 0.25, 1.5 + osc * 0.15, 0.55 + Math.max(0, osc) * 0.4];
+        case 2: // raised groove: hands up, elbows bent, swaying with the phase
+          return [0.25 + osc * 0.2, 2.0 + osc * 0.15, 0.8 + Math.max(0, osc) * 0.35];
         case 3: // side sway: arms hang, swinging laterally with the hips
           return [osc * 0.15, 0.18 + Math.sin(this.groovePhase) * 0.3, 0.25 + energy * 0.4];
         default: // pendulum swing (also the calm/unlocked fallback)
@@ -255,15 +277,90 @@ export class Animator {
     j.leftShoulder.position.y += f.treble * 0.02 * ps;
     j.rightShoulder.position.y += f.treble * 0.02 * ps;
 
-    // --- Foot IK: keep feet planted while the hips bounce and sway ---
+    this.finishFrame(f, dt);
+  }
+
+  /** Foot IK + face + model runtime update — shared by all behaviors. */
+  private finishFrame(f: AudioFeatures, dt: number): void {
+    const j = this.rig.joints;
     for (const [i, s] of (['left', 'right'] as const).entries()) {
       const anchor = this.footAnchors![i];
       pinEffector([j[`${s}LowerLeg`], j[`${s}UpperLeg`]], j[`${s}Foot`], anchor.pos);
       setWorldQuaternion(j[`${s}Foot`], anchor.quat);
     }
-
-    // --- Face (models with expression support) ---
     this.faceAnimator?.update(f, dt);
     this.rig.tick?.(dt);
+  }
+
+  /**
+   * Conversational behavior: still stance, head nods on stressed syllables,
+   * alternating-hand beat gestures keyed on onset strength — the timing
+   * backbone of co-speech gesture, hands accenting the prosodic stresses.
+   */
+  private speechLayers(f: AudioFeatures, dt: number): void {
+    const j = this.rig.joints;
+    const r = this.rig;
+
+    // Gesture triggering: onset above threshold, per-hand envelope with a
+    // short cooldown; strong onsets recruit both hands.
+    this.gestureCooldown -= dt;
+    this.gestureTarget.left *= Math.exp(-dt / 0.3);
+    this.gestureTarget.right *= Math.exp(-dt / 0.3);
+    if (f.onset > 0.55 && this.gestureCooldown <= 0) {
+      this.gestureSide = this.gestureSide === 'left' ? 'right' : 'left';
+      this.gestureTarget[this.gestureSide] = Math.min(1, f.onset * 0.8);
+      if (f.onset > 1.1) this.gestureTarget[this.gestureSide === 'left' ? 'right' : 'left'] = 0.6;
+      this.gestureCooldown = 0.32;
+    }
+
+    // Head: nod with stress, slow attentive wander.
+    const nod = this.headNod.update(Math.min(1, f.onset * 0.7), dt);
+    j.head.rotation.x += nod * 0.12 + Math.sin(this.t * 1.1) * 0.015;
+    j.head.rotation.y += Math.sin(this.t * 0.31) * 0.06;
+    j.neck.rotation.y += Math.sin(this.t * 0.17 + 1.2) * 0.04;
+
+    // Slow, small weight shift — standing, not dancing.
+    const side = Math.sin(this.t * 0.27) * 0.35;
+    j.hips.rotation.z -= side * 0.02;
+    j.spine.rotation.z += side * 0.03;
+    j.hips.position.x += side * 0.012 * r.positionScale;
+
+    // Arms: relaxed base pose plus per-hand gesture envelopes.
+    for (const s of ['left', 'right'] as const) {
+      const g = this.gesture[s].update(this.gestureTarget[s], dt);
+      const axes = r.armAxes[s];
+      j[`${s}UpperArm`].rotateOnAxis(axes.swing, 0.06 + g * 0.35);
+      j[`${s}UpperArm`].rotateOnAxis(axes.abduct, 0.06 + g * 0.22);
+      j[`${s}LowerArm`].rotateOnAxis(axes.flex, 0.4 + g * 0.85);
+      j[`${s}Hand`].rotateOnAxis(axes.flex, -g * 0.5); // hand opens on the beat
+      // Chest leans a touch toward the gesturing hand.
+      j.chest.rotation.z += (s === 'left' ? -1 : 1) * g * 0.02;
+    }
+  }
+
+  /**
+   * Idle life in silence: micro weight shifts and gaze wander built from
+   * incommensurate sines, so the pattern never visibly repeats.
+   */
+  private idleLayers(): void {
+    const j = this.rig.joints;
+    const r = this.rig;
+    const t = this.t;
+
+    const side = (Math.sin(t * 0.11) + 0.6 * Math.sin(t * 0.047 + 1.7)) * 0.5;
+    j.hips.position.x += side * 0.02 * r.positionScale;
+    j.hips.rotation.z -= side * 0.03;
+    j.spine.rotation.z += side * 0.04;
+
+    const yaw = 0.3 * (Math.sin(t * 0.13) + 0.5 * Math.sin(t * 0.041 + 2.1));
+    const pitch = 0.06 * Math.sin(t * 0.09 + 0.5);
+    j.neck.rotation.y += yaw * 0.5;
+    j.head.rotation.y += yaw * 0.4;
+    j.head.rotation.x += pitch;
+
+    for (const s of ['left', 'right'] as const) {
+      const axes = r.armAxes[s];
+      j[`${s}LowerArm`].rotateOnAxis(axes.flex, 0.18 + Math.sin(t * 0.19 + (s === 'left' ? 0 : 2)) * 0.03);
+    }
   }
 }

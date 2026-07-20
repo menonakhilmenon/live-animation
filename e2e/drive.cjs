@@ -202,18 +202,43 @@ function stats(arr) {
 
   // Sample the face for ~3 s of speech playback.
   let faceStats = { maxMouth: 0, blinkCount: 0, mood: 0 };
+  const speechBody = [];
   if (onFaceRig) {
     for (let i = 0; i < 30; i++) {
-      const d = await page.evaluate(() => window.__app.animator.faceAnimator?.debug() ?? null);
-      if (d) {
-        faceStats.maxMouth = Math.max(faceStats.maxMouth, d.aa + d.ih + d.ou);
-        faceStats.blinkCount = d.blinkCount;
-        faceStats.mood = d.mood;
+      const d = await page.evaluate(() => {
+        const face = window.__app.animator.faceAnimator?.debug() ?? null;
+        const { rig } = window.__app;
+        const V = rig.root.position.constructor;
+        const hl = new V(), hr = new V();
+        rig.joints.leftHand.getWorldPosition(hl);
+        rig.joints.rightHand.getWorldPosition(hr);
+        return {
+          face,
+          hipsY: rig.joints.hips.position.y,
+          handL: { x: hl.x, y: hl.y, z: hl.z },
+          handR: { x: hr.x, y: hr.y, z: hr.z },
+          headX: rig.joints.head.rotation.x,
+        };
+      });
+      speechBody.push(d);
+      if (d.face) {
+        faceStats.maxMouth = Math.max(faceStats.maxMouth, d.face.aa + d.face.ih + d.face.ou);
+        faceStats.blinkCount = d.face.blinkCount;
+        faceStats.mood = d.face.mood;
       }
       await page.waitForTimeout(100);
     }
     console.log('face: max mouth=%s blinks=%d mood=%s', faceStats.maxMouth.toFixed(2), faceStats.blinkCount, faceStats.mood.toFixed(2));
     await page.screenshot({ path: path.join(ART, '05-vrm-speech.png') });
+  }
+  const speechHips = speechBody.length ? stats(speechBody.map((s) => s.hipsY)) : { range: 0 };
+  const handRange = (key) =>
+    Math.max(
+      ...['x', 'y', 'z'].map((ax) => stats(speechBody.map((s) => s[key][ax])).range),
+    );
+  const speechArms = speechBody.length ? Math.max(handRange('handL'), handRange('handR')) : 0;
+  if (speechBody.length) {
+    console.log('speech body: hips range=%s (still)  hand travel=%sm', speechHips.range.toFixed(4), speechArms.toFixed(3));
   }
 
   console.log('--- 5. Console errors: %d', consoleErrors.length);
@@ -253,6 +278,8 @@ function stats(arr) {
     else {
       if (faceStats.maxMouth < 0.1) failures.push(`lip sync silent during speech (max mouth ${faceStats.maxMouth.toFixed(2)})`);
       if (faceStats.blinkCount < 1) failures.push('never blinked during 3s of speech');
+      if (speechHips.range > 0.02) failures.push(`still dancing during speech (hips range ${speechHips.range.toFixed(3)})`);
+      if (speechArms < 0.03) failures.push(`no visible speech gestures (hand travel ${speechArms.toFixed(3)}m)`);
     }
   }
   if (consoleErrors.length) failures.push(consoleErrors.length + ' console errors');

@@ -153,6 +153,7 @@ export class AudioEngine {
     f.section = ema(f.section, Math.min(1, f.rms * 3), 2.0, dt);
     f.nextDropIn = Infinity;
     f.mode = 'live';
+    f.onset = f.beatPulse;
 
     // Offline timeline overrides the causal estimates with exact values.
     if (this.timeline && this.clockEl && !this.clockEl.paused) {
@@ -172,6 +173,7 @@ export class AudioEngine {
     f.mid = ema(f.mid, tl.frames.mid[idx], 0.08, dt);
     f.treble = ema(f.treble, tl.frames.treble[idx], 0.08, dt);
     f.section = tl.frames.loudness[idx];
+    f.onset = tl.frames.onset[idx];
 
     // Exact beat grid → beat events, continuous beat/bar phase.
     if (tl.beats.length >= 2) {

@@ -44,6 +44,12 @@ export interface AudioFeatures {
   /** Content mode: 'music' | 'speech' | 'silence' | 'live' (no timeline). */
   mode: string;
   /**
+   * Instantaneous onset strength (~0–1.5): spectral-flux novelty at the
+   * current playback frame. Speech gestures key on this. Falls back to the
+   * beat pulse for live input.
+   */
+  onset: number;
+  /**
    * Continuous beat phase from the phase-locked tempo oscillator; the
    * fractional part is the position within the current beat (0 = on the
    * beat). Lets animation anticipate beats instead of reacting to them.
@@ -69,6 +75,7 @@ export function emptyFeatures(): AudioFeatures {
     section: 0.5,
     nextDropIn: Infinity,
     mode: 'live',
+    onset: 0,
   };
 }
 
