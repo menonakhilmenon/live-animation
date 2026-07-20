@@ -73,6 +73,11 @@ renderer.setAnimationLoop(() => {
   renderer.render(scene, camera);
 });
 
+// Dev-only hook so automated tests can sample the rig and audio features.
+if (import.meta.env.DEV) {
+  (window as unknown as Record<string, unknown>).__app = { rig, audio };
+}
+
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
