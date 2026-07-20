@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Live Animation — audio-driven humanoid</title>
+    <style>
+      html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0e13; }
+      #app { position: fixed; inset: 0; }
+      #panel {
+        position: fixed; top: 12px; left: 12px; z-index: 10;
+        display: flex; flex-direction: column; gap: 8px;
+        font: 13px system-ui, sans-serif; color: #dfe6f0;
+        background: rgba(15, 20, 28, 0.85); border: 1px solid #2a3442;
+        border-radius: 10px; padding: 12px 14px; min-width: 260px;
+      }
+      #panel h1 { font-size: 14px; margin: 0 0 2px; font-weight: 600; }
+      #panel .row { display: flex; gap: 8px; align-items: center; }
+      #panel button {
+        background: #22303f; color: #dfe6f0; border: 1px solid #3a4a5c;
+        border-radius: 6px; padding: 5px 10px; cursor: pointer;
+      }
+      #panel button:hover { background: #2c3d50; }
+      #panel button.active { background: #3b5b7d; border-color: #5c86b0; }
+      #audio-el { width: 100%; height: 30px; }
+      .meter { height: 6px; background: #1a2330; border-radius: 3px; overflow: hidden; }
+      .meter > div { height: 100%; width: 0%; border-radius: 3px; }
+      #m-rms > div { background: #6fc2ff; }
+      #m-bass > div { background: #ff9d6f; }
+      #m-beat > div { background: #b78cff; }
+      label.meter-label { font-size: 11px; color: #8fa1b5; }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <div id="panel">
+      <h1>Audio → Humanoid</h1>
+      <div class="row">
+        <button id="btn-file">Load audio file</button>
+        <button id="btn-mic">Use microphone</button>
+      </div>
+      <input id="file-input" type="file" accept="audio/*" hidden />
+      <audio id="audio-el" controls hidden></audio>
+      <label class="meter-label">level</label>
+      <div class="meter" id="m-rms"><div></div></div>
+      <label class="meter-label">bass</label>
+      <div class="meter" id="m-bass"><div></div></div>
+      <label class="meter-label">beat</label>
+      <div class="meter" id="m-beat"><div></div></div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
