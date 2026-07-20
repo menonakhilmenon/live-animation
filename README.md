@@ -26,13 +26,18 @@ audio file / mic
 AudioEngine (src/audio/engine.ts)
   Web Audio AnalyserNode → per-frame features:
   RMS level, bass/mid/treble energy, spectral brightness,
-  beat detection (adaptive bass-onset threshold) + beat pulse envelope
+  beat detection (adaptive bass-onset threshold) + beat pulse envelope,
+  tempo estimation (src/audio/tempo.ts): BPM from folded inter-onset
+  intervals + a phase-locked oscillator exposing continuous beat phase
       │
       ▼  AudioFeatures (src/audio/features.ts)
 Animator (src/animation/animator.ts)
   Layered procedural motion, smoothed by critically-damped springs:
   breathing · hip bounce + knee flex · weight shift/sway ·
   head nod · arm swing/raise · shoulder shrug
+  When tempo confidence is high the groove phase-locks to the beat and
+  anticipates it (pulse peaks ON the beat, not after detection); style
+  amplitudes crossfade with sustained energy: calm sway → groove → hype
       │
       ▼
 HumanoidRig (src/rig/humanoid.ts, src/rig/loader.ts)
@@ -64,7 +69,5 @@ Design notes:
 
 ## Roadmap ideas
 
-- Tempo tracking (BPM estimation) to phase-lock the groove to the music
-- Style presets (calm sway / energetic dance / headbang) selected by energy
 - Lip sync from mid-band energy when a face mesh is available
 - Foot IK for proper ground contact during bounce

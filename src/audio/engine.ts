@@ -1,4 +1,5 @@
 import { AudioFeatures, emptyFeatures, ema } from './features';
+import { TempoTracker } from './tempo';
 
 const BASS_RANGE: [number, number] = [20, 250];
 const MID_RANGE: [number, number] = [250, 2000];
@@ -25,6 +26,8 @@ export class AudioEngine {
 
   private freqData: Uint8Array<ArrayBuffer> = new Uint8Array(0);
   private timeData: Uint8Array<ArrayBuffer> = new Uint8Array(0);
+
+  private tempo = new TempoTracker();
 
   /** Rolling history of instantaneous bass energy, for the beat threshold. */
   private bassHistory: number[] = [];
@@ -87,6 +90,11 @@ export class AudioEngine {
 
     this.detectBeat(bassNow, rmsNow, dt);
     f.timeSinceBeat = this.timeSec - this.lastBeatTime;
+
+    this.tempo.update(dt, f.beat);
+    f.bpm = this.tempo.bpm;
+    f.tempoConfidence = this.tempo.confidence;
+    f.beatPhase = this.tempo.phase;
     return f;
   }
 

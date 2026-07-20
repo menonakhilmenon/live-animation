@@ -87,8 +87,12 @@ function stats(arr) {
   const hips = stats(during.map((s) => s.hipsY));
   const arm = stats(during.map((s) => s.armX));
   const beatsSeen = during.filter((s) => s.f.timeSinceBeat < 0.6).length;
+  const lastBpm = last.f.bpm;
+  const lastConf = last.f.tempoConfidence;
+  const phaseAdvanced = last.f.beatPhase - during[0].f.beatPhase;
   console.log('rms max=%s  bass max=%s  beatPulse max=%s', rms.max.toFixed(4), bass.max.toFixed(4), pulse.max.toFixed(3));
   console.log('samples with a recent beat: %d/24', beatsSeen);
+  console.log('tempo: %s BPM  confidence=%s  phase advanced %s beats', lastBpm.toFixed(1), lastConf.toFixed(2), phaseAdvanced.toFixed(1));
   console.log('hipsY range=%s  armX range=%s', hips.range.toFixed(4), arm.range.toFixed(4));
 
   console.log('--- 4. Microphone path (fake device)');
@@ -121,6 +125,10 @@ function stats(arr) {
   if (pulse.max < 0.5) failures.push('no beat pulse detected');
   if (beatsSeen < 4) failures.push('too few beats detected');
   if (hips.range < 0.01) failures.push('hips did not bounce');
+  // The test WAV is authored at exactly 120 BPM.
+  if (Math.abs(lastBpm - 120) > 6) failures.push(`tempo estimate off: ${lastBpm.toFixed(1)} BPM (expected ~120)`);
+  if (lastConf < 0.6) failures.push(`tempo confidence low: ${lastConf.toFixed(2)}`);
+  if (phaseAdvanced < 2) failures.push('beat phase did not advance');
   if (arm.range < 0.05) failures.push('arms did not move');
   if (mic.f.rms < 0.005) failures.push('mic (fake device) produced no signal');
   if (!toggleOk) failures.push('character toggle did not switch rigs');

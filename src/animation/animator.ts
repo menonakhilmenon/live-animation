@@ -2,26 +2,53 @@ import { AudioFeatures } from '../audio/features';
 import { HumanoidRig, resetToRest } from '../rig/humanoid';
 import { Spring } from './spring';
 
+function smoothstep(lo: number, hi: number, x: number): number {
+  const t = Math.min(1, Math.max(0, (x - lo) / (hi - lo)));
+  return t * t * (3 - 2 * t);
+}
+
+/** Wrap an angle difference into [-PI, PI). */
+function wrapAngle(a: number): number {
+  return ((a + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI;
+}
+
+/**
+ * Style parameters blended continuously from sustained energy:
+ * calm (idle sway) → groove (dancing) → hype (headbang territory).
+ */
+const STYLES = {
+  calm: { bounce: 0.45, nod: 0.1, sway: 1.15, arms: 0.35, elbows: 0.4 },
+  groove: { bounce: 1.0, nod: 0.28, sway: 1.0, arms: 1.0, elbows: 1.0 },
+  hype: { bounce: 1.35, nod: 0.55, sway: 0.8, arms: 1.45, elbows: 1.25 },
+};
+type StyleParams = (typeof STYLES)['calm'];
+
 /**
  * Layered procedural animator. Each frame it resets the rig to its rest pose
  * and applies motion layers on top, each scaled by live audio features:
  *
  *  - breathing   — always on; grows subtler as energy rises
- *  - groove      — hips bounce + knee flex from bass and the beat pulse
- *  - sway        — weight shift and torso lean from overall energy
+ *  - groove      — hips bounce + knee flex; phase-locked to the estimated
+ *                  tempo when confidence is high (anticipates beats), else
+ *                  reactive to the raw beat pulse
+ *  - sway        — weight shift and torso lean, alternating per beat
  *  - head        — nod on beats, micro-bob with level, tilt with brightness
  *  - arms        — swing with energy, raise with sustained intensity
+ *
+ * Style (amplitude balance across layers) crossfades with sustained energy.
  */
 export class Animator {
   private t = 0;
-  /** Phase accumulator that speeds up with energy so motion follows intensity. */
+  /** Arm-swing phase; one full swing spans two beats when tempo-locked. */
   private groovePhase = 0;
+  private prevBeatPhase = 0;
 
   private bounce = new Spring(0, 60);
   private energy = new Spring(0, 8);
   private headNod = new Spring(0, 55);
   private armRaise = new Spring(0, 10);
   private sideStep = new Spring(0, 12);
+  private lock = new Spring(0, 6);
   /** Which side the weight is on: alternates on beats. */
   private weightSide = 1;
 
@@ -34,14 +61,46 @@ export class Animator {
     // Sustained intensity (slow spring) gates most layers so the character
     // relaxes to idle in silence and commits to the groove on loud sections.
     const energy = this.energy.update(Math.min(1, f.rms * 3 + f.beatPulse * 0.3), dt);
-    this.groovePhase += dt * (0.8 + energy * 3.2);
 
-    if (f.beat) this.weightSide = -this.weightSide;
+    // Style crossfade weights (calm + groove + hype = 1).
+    const wHype = smoothstep(0.55, 0.8, energy);
+    const wCalm = (1 - wHype) * (1 - smoothstep(0.2, 0.45, energy));
+    const wGroove = 1 - wCalm - wHype;
+    const S: StyleParams = {
+      bounce: wCalm * STYLES.calm.bounce + wGroove * STYLES.groove.bounce + wHype * STYLES.hype.bounce,
+      nod: wCalm * STYLES.calm.nod + wGroove * STYLES.groove.nod + wHype * STYLES.hype.nod,
+      sway: wCalm * STYLES.calm.sway + wGroove * STYLES.groove.sway + wHype * STYLES.hype.sway,
+      arms: wCalm * STYLES.calm.arms + wGroove * STYLES.groove.arms + wHype * STYLES.hype.arms,
+      elbows: wCalm * STYLES.calm.elbows + wGroove * STYLES.groove.elbows + wHype * STYLES.hype.elbows,
+    };
 
-    const bounce = this.bounce.update(f.beatPulse * 0.09 + f.bass * 0.03, dt);
-    const nod = this.headNod.update(f.beatPulse, dt);
+    // How much to trust the tempo tracker (springed so handoffs are smooth).
+    const lock = this.lock.update(f.bpm > 0 && f.tempoConfidence > 0.6 ? 1 : 0, dt);
+
+    // Arm-swing phase: free-runs with energy when unlocked; when locked it
+    // follows the beat phase (one swing per two beats) via a soft correction.
+    this.groovePhase += dt * ((1 - lock) * (0.8 + energy * 3.2) + lock * (f.bpm / 60) * Math.PI);
+    if (lock > 0.01) {
+      this.groovePhase -= wrapAngle(this.groovePhase - Math.PI * f.beatPhase) * 3 * lock * dt;
+    }
+
+    // Weight flips on beat boundaries when locked (phase wraps), else on
+    // raw detector beats.
+    const phaseWrapped = Math.floor(f.beatPhase) !== Math.floor(this.prevBeatPhase);
+    this.prevBeatPhase = f.beatPhase;
+    if (lock > 0.5 ? phaseWrapped : f.beat) this.weightSide = -this.weightSide;
+
+    // Anticipatory pulse: peaks exactly on the beat (phase 0), rising just
+    // before it — the dancer "knows" the beat is coming. Crossfaded with the
+    // reactive envelope so low-confidence audio still moves.
+    const frac = f.beatPhase - Math.floor(f.beatPhase);
+    const phasedPulse = Math.pow(Math.max(0, Math.cos(2 * Math.PI * frac)), 3);
+    const pulse = lock * phasedPulse * Math.min(1, energy * 2) + (1 - lock) * f.beatPulse;
+
+    const bounce = this.bounce.update((pulse * 0.09 + f.bass * 0.03) * S.bounce, dt);
+    const nod = this.headNod.update(pulse, dt);
     const raise = this.armRaise.update(Math.max(0, energy - 0.45) * 1.8, dt);
-    const side = this.sideStep.update(this.weightSide * Math.min(1, energy * 1.4), dt);
+    const side = this.sideStep.update(this.weightSide * Math.min(1, energy * 1.4) * S.sway, dt);
 
     const r = this.rig;
     resetToRest(r);
@@ -73,7 +132,7 @@ export class Animator {
     j.spine.rotation.y += Math.sin(this.groovePhase) * 0.1 * energy;
 
     // --- Head ---
-    j.head.rotation.x += nod * 0.28 + Math.sin(this.t * 2.3) * 0.02;
+    j.head.rotation.x += nod * S.nod + Math.sin(this.t * 2.3) * 0.02;
     j.head.rotation.z -= side * 0.1;
     // Brightness tilts the head up slightly on bright/airy audio.
     j.neck.rotation.x -= f.brightness * 0.12;
@@ -87,9 +146,9 @@ export class Animator {
       // Rest: arms hang down. Abduct outward with raise, swing forward/back
       // with the groove, bend elbows more as energy rises.
       upper.rotation.z += sign * (0.08 + raise * 1.5);
-      upper.rotation.x += swing * (0.12 + energy * 0.45) - raise * 0.4;
-      lower.rotation.x -= 0.15 + energy * 0.9 + Math.max(0, -swing) * 0.35 * energy;
-      lower.rotation.x += nod * 0.25; // elbows pump a little on the beat
+      upper.rotation.x += swing * (0.12 + energy * 0.45) * S.arms - raise * 0.4;
+      lower.rotation.x -= (0.15 + energy * 0.9 + Math.max(0, -swing) * 0.35 * energy) * S.elbows;
+      lower.rotation.x += nod * 0.25 * S.elbows; // elbows pump on the beat
 
       j[`${s}Hand`].rotation.x -= energy * 0.3;
     }

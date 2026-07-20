@@ -46,6 +46,13 @@ export function updateMeters(engine: AudioEngine): void {
   setMeter('m-rms', Math.min(1, f.rms * 2.5));
   setMeter('m-bass', f.bass);
   setMeter('m-beat', f.beatPulse);
+  const bpmLabel = document.getElementById('bpm-label');
+  if (bpmLabel) {
+    bpmLabel.textContent =
+      f.bpm > 0
+        ? `tempo: ${f.bpm.toFixed(0)} BPM${f.tempoConfidence > 0.6 ? ' (locked)' : ''}`
+        : 'tempo: —';
+  }
 }
 
 function setMeter(id: string, value: number): void {

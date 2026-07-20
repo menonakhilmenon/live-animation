@@ -27,6 +27,16 @@ export interface AudioFeatures {
   beatStrength: number;
   /** Seconds since the last beat (large when idle). */
   timeSinceBeat: number;
+  /** Estimated tempo in BPM (0 until the tracker locks on). */
+  bpm: number;
+  /** 0–1 confidence in the tempo estimate. */
+  tempoConfidence: number;
+  /**
+   * Continuous beat phase from the phase-locked tempo oscillator; the
+   * fractional part is the position within the current beat (0 = on the
+   * beat). Lets animation anticipate beats instead of reacting to them.
+   */
+  beatPhase: number;
 }
 
 export function emptyFeatures(): AudioFeatures {
@@ -40,6 +50,9 @@ export function emptyFeatures(): AudioFeatures {
     beatPulse: 0,
     beatStrength: 0,
     timeSinceBeat: 1e9,
+    bpm: 0,
+    tempoConfidence: 0,
+    beatPhase: 0,
   };
 }
 
