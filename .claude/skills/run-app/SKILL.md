@@ -52,6 +52,17 @@ and asserts: audio plays, RMS/bass rise, beats are detected, hips bounce,
 arms move, mic path yields signal, zero console errors. Screenshots land in
 `e2e/.artifacts/` — look at them; a blank canvas means WebGL failed.
 
+## DSP iteration loop (no browser needed)
+
+For tuning `src/audio/analysis.ts`, compile it for node and run against the
+test WAVs directly — much faster than browser roundtrips:
+
+```bash
+npx esbuild src/audio/analysis.ts --bundle --format=cjs --platform=node \
+  --outfile=/tmp/analysis.cjs
+# then require('/tmp/analysis.cjs').analyzeBuffer(samples, sr) on WAV data
+```
+
 ## Gotchas actually hit
 
 - TS 5.7+ needs `Uint8Array<ArrayBuffer>` for analyser buffers.
@@ -59,4 +70,9 @@ arms move, mic path yields signal, zero console errors. Screenshots land in
   Playwright `response` events but does log a console 404 — index.html
   ships a data-URI icon so the zero-console-errors assertion holds.
 - `createMediaElementSource` can only be called once per `<audio>` element
-  (`src/ui.ts` guards this).
+  (the engine caches and reconnects it).
+- The full e2e needs BOTH models (`npm run fetch:model` downloads Xbot.glb
+  and avatar.vrm); with fewer than 3 rigs the face assertions are skipped.
+- Bone frames differ per rig format (Mixamo Y-along-bone; VRM0 normalized
+  bones sit under a 180° parent rotation) — never hardcode rotation axes;
+  probe them like `src/rig/axes.ts` / `calibrateArmsDown` do.
