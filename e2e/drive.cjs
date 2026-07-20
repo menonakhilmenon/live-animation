@@ -52,10 +52,13 @@ function stats(arr) {
   const sample = () =>
     page.evaluate(() => {
       const { rig, audio } = window.__app;
+      const foot = new (rig.root.position.constructor)();
+      rig.joints.leftFoot.getWorldPosition(foot);
       return {
         f: { ...audio.features },
         hipsY: rig.joints.hips.position.y,
         armX: rig.joints.leftUpperArm.rotation.x,
+        footWorld: { x: foot.x, y: foot.y, z: foot.z },
         audioEl: (() => {
           const el = document.getElementById('audio-el');
           return { paused: el.paused, t: el.currentTime };
@@ -93,7 +96,12 @@ function stats(arr) {
   console.log('rms max=%s  bass max=%s  beatPulse max=%s', rms.max.toFixed(4), bass.max.toFixed(4), pulse.max.toFixed(3));
   console.log('samples with a recent beat: %d/24', beatsSeen);
   console.log('tempo: %s BPM  confidence=%s  phase advanced %s beats', lastBpm.toFixed(1), lastConf.toFixed(2), phaseAdvanced.toFixed(1));
-  console.log('hipsY range=%s  armX range=%s', hips.range.toFixed(4), arm.range.toFixed(4));
+  const footDrift = Math.max(
+    stats(during.map((s) => s.footWorld.x)).range,
+    stats(during.map((s) => s.footWorld.y)).range,
+    stats(during.map((s) => s.footWorld.z)).range,
+  );
+  console.log('hipsY range=%s  armX range=%s  foot drift=%sm', hips.range.toFixed(4), arm.range.toFixed(4), footDrift.toFixed(4));
 
   console.log('--- 4. Microphone path (fake device)');
   await page.click('#btn-mic');
@@ -125,6 +133,8 @@ function stats(arr) {
   if (pulse.max < 0.5) failures.push('no beat pulse detected');
   if (beatsSeen < 4) failures.push('too few beats detected');
   if (hips.range < 0.01) failures.push('hips did not bounce');
+  // Foot IK: while the hips move, the planted foot should stay put (meters).
+  if (footDrift > 0.03) failures.push(`foot slid ${footDrift.toFixed(3)}m despite IK pinning`);
   // The test WAV is authored at exactly 120 BPM.
   if (Math.abs(lastBpm - 120) > 6) failures.push(`tempo estimate off: ${lastBpm.toFixed(1)} BPM (expected ~120)`);
   if (lastConf < 0.6) failures.push(`tempo confidence low: ${lastConf.toFixed(2)}`);

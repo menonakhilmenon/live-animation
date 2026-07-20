@@ -1,5 +1,7 @@
+import * as THREE from 'three';
 import { AudioFeatures } from '../audio/features';
 import { HumanoidRig, resetToRest } from '../rig/humanoid';
+import { pinEffector, setWorldQuaternion } from './ik';
 import { Spring } from './spring';
 
 function smoothstep(lo: number, hi: number, x: number): number {
@@ -51,6 +53,9 @@ export class Animator {
   private lock = new Spring(0, 6);
   /** Which side the weight is on: alternates on beats. */
   private weightSide = 1;
+
+  /** World-space rest pose of each foot — the ground-contact IK targets. */
+  private footAnchors: { pos: THREE.Vector3; quat: THREE.Quaternion }[] | null = null;
 
   constructor(private rig: HumanoidRig) {}
 
@@ -105,6 +110,17 @@ export class Animator {
     const r = this.rig;
     resetToRest(r);
     const j = r.joints;
+
+    if (!this.footAnchors) {
+      r.root.updateWorldMatrix(true, true);
+      this.footAnchors = (['left', 'right'] as const).map((s) => {
+        const pos = new THREE.Vector3();
+        const quat = new THREE.Quaternion();
+        j[`${s}Foot`].getWorldPosition(pos);
+        j[`${s}Foot`].getWorldQuaternion(quat);
+        return { pos, quat };
+      });
+    }
     // Positional offsets below are authored in meters; ps converts them to
     // the rig's local units (see HumanoidRig.positionScale).
     const ps = r.positionScale;
@@ -116,11 +132,12 @@ export class Animator {
 
     // --- Groove: bounce hips, flex knees to keep feet planted ---
     j.hips.position.y -= bounce * ps;
+    // Pre-bend the knees in their natural direction; foot IK below does the
+    // exact ground pinning, this seed just keeps CCD from picking a weird bend.
     const knee = bounce * 3.2;
     for (const s of ['left', 'right'] as const) {
       j[`${s}UpperLeg`].rotation.x -= knee * 0.9;
       j[`${s}LowerLeg`].rotation.x += knee * 1.8;
-      j[`${s}Foot`].rotation.x -= knee * 0.9;
     }
 
     // --- Weight shift / sway ---
@@ -156,5 +173,12 @@ export class Animator {
     // Shoulders shrug slightly with treble (hi-hats, snares).
     j.leftShoulder.position.y += f.treble * 0.02 * ps;
     j.rightShoulder.position.y += f.treble * 0.02 * ps;
+
+    // --- Foot IK: keep feet planted while the hips bounce and sway ---
+    for (const [i, s] of (['left', 'right'] as const).entries()) {
+      const anchor = this.footAnchors![i];
+      pinEffector([j[`${s}LowerLeg`], j[`${s}UpperLeg`]], j[`${s}Foot`], anchor.pos);
+      setWorldQuaternion(j[`${s}Foot`], anchor.quat);
+    }
   }
 }

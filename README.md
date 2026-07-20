@@ -38,6 +38,8 @@ Animator (src/animation/animator.ts)
   When tempo confidence is high the groove phase-locks to the beat and
   anticipates it (pulse peaks ON the beat, not after detection); style
   amplitudes crossfade with sustained energy: calm sway → groove → hype
+  Foot IK (src/animation/ik.ts): rig-agnostic CCD pins the feet to their
+  ground rest positions while hips bounce and sway
       │
       ▼
 HumanoidRig (src/rig/humanoid.ts, src/rig/loader.ts)
@@ -70,4 +72,4 @@ Design notes:
 ## Roadmap ideas
 
 - Lip sync from mid-band energy when a face mesh is available
-- Foot IK for proper ground contact during bounce
+- Stepping: move the foot anchors when the weight shift exceeds a threshold
