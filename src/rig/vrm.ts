@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { VRM, VRMHumanBoneName, VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
-import { finalizeRig } from './loader';
+import { collectFingers, finalizeRig } from './loader';
 import { FaceDriver, HumanoidRig, JointName } from './humanoid';
 
 /** three-vrm normalized humanoid bone name for each of our joints. */
@@ -109,5 +109,28 @@ export async function loadVRMRig(url: string): Promise<HumanoidRig> {
   const rig = finalizeRig(root, joints);
   rig.face = new VRMFace(vrm);
   rig.tick = (dt) => vrm.update(dt);
+
+  // Finger bones via the normalized humanoid (all spec finger names).
+  const fingerNodes = { left: [] as THREE.Object3D[], right: [] as THREE.Object3D[] };
+  for (const side of ['left', 'right'] as const) {
+    for (const digit of ['Thumb', 'Index', 'Middle', 'Ring', 'Little']) {
+      for (const seg of digit === 'Thumb'
+        ? ['Metacarpal', 'Proximal', 'Distal']
+        : ['Proximal', 'Intermediate', 'Distal']) {
+        const node = vrm.humanoid.getNormalizedBoneNode(
+          `${side}${digit}${seg}` as VRMHumanBoneName,
+        );
+        if (node) fingerNodes[side].push(node);
+      }
+    }
+  }
+  if (fingerNodes.left.length || fingerNodes.right.length) {
+    rig.fingers = collectFingers(
+      root,
+      joints,
+      { left: rig.armAxes.left.flex, right: rig.armAxes.right.flex },
+      fingerNodes,
+    );
+  }
   return rig;
 }

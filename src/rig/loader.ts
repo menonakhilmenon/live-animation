@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { probeArmAxes, probeAxis } from './axes';
-import { HumanoidRig, JointName, RestPose } from './humanoid';
+import { FingerJoint, HumanoidRig, JointName, RestPose } from './humanoid';
 
 /**
  * Accepted (normalized) bone names per joint. Covers Mixamo naming; add
@@ -77,7 +77,23 @@ export async function loadGLBRig(url: string): Promise<HumanoidRig> {
     throw new Error(`loadGLBRig(${url}): unmapped joints: ${missing.join(', ')}`);
   }
 
-  return finalizeRig(root, joints);
+  const rig = finalizeRig(root, joints);
+
+  // Finger bones (Mixamo naming: LeftHandIndex1..3 etc.).
+  const fingerNodes = { left: [] as THREE.Object3D[], right: [] as THREE.Object3D[] };
+  gltf.scene.traverse((obj) => {
+    const m = normalizeBoneName(obj.name).match(/^(left|right)hand(thumb|index|middle|ring|pinky)\d$/);
+    if (m) fingerNodes[m[1] as 'left' | 'right'].push(obj);
+  });
+  if (fingerNodes.left.length || fingerNodes.right.length) {
+    rig.fingers = collectFingers(
+      root,
+      joints,
+      { left: rig.armAxes.left.flex, right: rig.armAxes.right.flex },
+      fingerNodes,
+    );
+  }
+  return rig;
 }
 
 /**
@@ -108,6 +124,59 @@ export function finalizeRig(root: THREE.Group, joints: Record<JointName, THREE.O
   }
 
   return { root, joints, rest, positionScale, armAxes };
+}
+
+/**
+ * Package finger bones for animation: capture rest rotations and resolve
+ * the curl direction. The curl axis is the hand's flex axis (finger frames
+ * are consistent with the hand within a rig); its sign is probed by test-
+ * curling all fingers both ways and keeping the direction that brings the
+ * fingertips toward the body — with calibrated hanging arms the palms face
+ * the thighs, so curling inward reduces distance to the hips.
+ */
+export function collectFingers(
+  root: THREE.Object3D,
+  joints: Record<JointName, THREE.Object3D>,
+  flexAxis: { left: THREE.Vector3; right: THREE.Vector3 },
+  nodesPerSide: { left: THREE.Object3D[]; right: THREE.Object3D[] },
+): { left: FingerJoint[]; right: FingerJoint[] } {
+  const hipsPos = new THREE.Vector3();
+  const tipPos = new THREE.Vector3();
+  const result = { left: [] as FingerJoint[], right: [] as FingerJoint[] };
+
+  for (const side of ['left', 'right'] as const) {
+    const nodes = nodesPerSide[side];
+    if (!nodes.length) continue;
+    const rests = nodes.map((n) => n.quaternion.clone());
+
+    const totalTipDistance = (sign: number): number => {
+      for (const [i, n] of nodes.entries()) {
+        n.quaternion.copy(rests[i]);
+        n.rotateOnAxis(flexAxis[side], sign * 0.5);
+      }
+      root.updateMatrixWorld(true);
+      joints.hips.getWorldPosition(hipsPos);
+      let sum = 0;
+      for (const n of nodes) {
+        const tip = n.children[0] ?? n;
+        tip.getWorldPosition(tipPos);
+        sum += tipPos.distanceTo(hipsPos);
+      }
+      return sum;
+    };
+
+    const sign = totalTipDistance(1) <= totalTipDistance(-1) ? 1 : -1;
+    for (const [i, n] of nodes.entries()) {
+      n.quaternion.copy(rests[i]);
+      result[side].push({
+        node: n,
+        rest: rests[i],
+        curlAxis: flexAxis[side].clone().multiplyScalar(sign),
+      });
+    }
+    root.updateMatrixWorld(true);
+  }
+  return result;
 }
 
 function calibrateArmsDown(root: THREE.Group, joints: Record<JointName, THREE.Object3D>): void {

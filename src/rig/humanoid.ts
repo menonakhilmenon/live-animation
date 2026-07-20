@@ -31,6 +31,13 @@ export interface RestPose {
   quaternion: THREE.Quaternion;
 }
 
+export interface FingerJoint {
+  node: THREE.Object3D;
+  rest: THREE.Quaternion;
+  /** Curl axis in the finger's local frame, sign resolved toward the palm. */
+  curlAxis: THREE.Vector3;
+}
+
 /**
  * A humanoid rig: a root object plus named joint transforms and their rest
  * pose. The animator works purely against this interface, so any skeleton
@@ -50,6 +57,11 @@ export interface HumanoidRig {
   armAxes: { left: ArmAxes; right: ArmAxes };
   /** Facial expression driver, when the model has one (VRM). */
   face?: FaceDriver;
+  /**
+   * Finger bones with their captured rest rotations and a curl sign
+   * (+1/-1 depending on the rig's finger frames), when the model has them.
+   */
+  fingers?: { left: FingerJoint[]; right: FingerJoint[] };
   /** Per-frame hook for rigs needing runtime updates (e.g. vrm.update). */
   tick?: (dt: number) => void;
 }

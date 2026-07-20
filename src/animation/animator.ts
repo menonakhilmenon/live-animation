@@ -67,8 +67,13 @@ export class Animator {
   /** Arm move rotation: switches on bar boundaries when locked. */
   private moveIndex = 0;
   private movePrev = 0;
-  private moveBlend = 1;
+  /** Slightly underdamped so move changes carry follow-through overshoot. */
+  private moveBlend = new Spring(1, 28, 0.75);
   private lastPhrase = -1;
+
+  /** Finger curl per hand (smoothed toward per-behavior targets). */
+  private curl = { left: new Spring(0.25, 25), right: new Spring(0.25, 25) };
+  private curlTarget = { left: 0.25, right: 0.25 };
 
   /** Drop anticipation state. */
   private windup = new Spring(0, 20);
@@ -108,7 +113,8 @@ export class Animator {
       this.hitTimer = 1.2; // the drop just landed
       this.movePrev = this.moveIndex;
       this.moveIndex = 2; // raised groove hit
-      this.moveBlend = 0;
+      this.moveBlend.value = 0;
+      this.moveBlend.velocity = 0;
     }
     this.prevDropIn = f.nextDropIn;
     this.hitTimer = Math.max(0, this.hitTimer - dt);
@@ -157,12 +163,14 @@ export class Animator {
       if (this.lastPhrase >= 0 && energy > 0.35) {
         this.movePrev = this.moveIndex;
         this.moveIndex = (this.moveIndex + 1) % 4;
-        this.moveBlend = 0;
+        this.moveBlend.value = 0;
+        this.moveBlend.velocity = 0;
       }
       this.lastPhrase = phrase;
     }
-    this.moveBlend = Math.min(1, this.moveBlend + dt / 0.45);
-    const blend = smoothstep(0, 1, this.moveBlend);
+    // Underdamped: blend passes 1 and settles back — arm moves arrive with
+    // a little momentum instead of easing in sterilely.
+    const blend = Math.max(0, Math.min(1.15, this.moveBlend.update(1, dt)));
 
     const bounce = this.bounce.update(
       (pulse * 0.09 + f.bass * 0.03) * S.bounce * (1 + hit * 0.5) + windup * 0.055,
@@ -227,7 +235,17 @@ export class Animator {
     j.spine.rotation.z += side * 0.08;
     j.chest.rotation.z += side * 0.05;
     // Counter-rotate torso around Y for a loose, dancing feel.
-    j.spine.rotation.y += Math.sin(this.groovePhase) * 0.1 * energy;
+    const torsoYaw = Math.sin(this.groovePhase) * 0.1 * energy;
+    j.spine.rotation.y += torsoYaw;
+    // Hip arcs: subtle forward/back drift at double time plus a hint of hip
+    // yaw turns the vertical bounce + lateral sway into a figure-8 weight
+    // path instead of a piston.
+    j.hips.position.z += Math.sin(this.groovePhase * 2) * 0.008 * ps * energy;
+    j.hips.rotation.y += Math.sin(this.groovePhase) * 0.05 * energy;
+    // Gaze stabilization: the head counter-rotates most of the torso yaw so
+    // the face stays on the audience — dancers stabilize their gaze.
+    j.neck.rotation.y -= torsoYaw * 0.55;
+    j.head.rotation.y -= torsoYaw * 0.3;
 
     // --- Head ---
     // Wind-up: head tucks slightly, then snaps up on the hit.
@@ -271,6 +289,7 @@ export class Animator {
       j[`${s}UpperArm`].rotateOnAxis(axes.abduct, abductA);
       j[`${s}LowerArm`].rotateOnAxis(axes.flex, flexA);
       j[`${s}Hand`].rotateOnAxis(axes.flex, energy * 0.3);
+      this.curlTarget[s] = 0.3 + pulse * 0.2 + energy * 0.1;
     }
 
     // Shoulders shrug slightly with treble (hi-hats, snares).
@@ -280,13 +299,22 @@ export class Animator {
     this.finishFrame(f, dt);
   }
 
-  /** Foot IK + face + model runtime update — shared by all behaviors. */
+  /** Foot IK + fingers + face + model runtime update — all behaviors. */
   private finishFrame(f: AudioFeatures, dt: number): void {
     const j = this.rig.joints;
     for (const [i, s] of (['left', 'right'] as const).entries()) {
       const anchor = this.footAnchors![i];
       pinEffector([j[`${s}LowerLeg`], j[`${s}UpperLeg`]], j[`${s}Foot`], anchor.pos);
       setWorldQuaternion(j[`${s}Foot`], anchor.quat);
+    }
+    if (this.rig.fingers) {
+      for (const s of ['left', 'right'] as const) {
+        const c = this.curl[s].update(this.curlTarget[s], dt);
+        for (const fj of this.rig.fingers[s]) {
+          fj.node.quaternion.copy(fj.rest);
+          fj.node.rotateOnAxis(fj.curlAxis, c);
+        }
+      }
     }
     this.faceAnimator?.update(f, dt);
     this.rig.tick?.(dt);
@@ -333,8 +361,9 @@ export class Animator {
       j[`${s}UpperArm`].rotateOnAxis(axes.abduct, 0.06 + g * 0.22);
       j[`${s}LowerArm`].rotateOnAxis(axes.flex, 0.4 + g * 0.85);
       j[`${s}Hand`].rotateOnAxis(axes.flex, -g * 0.5); // hand opens on the beat
-      // Chest leans a touch toward the gesturing hand.
+      // Chest leans a touch toward the gesturing hand; fingers open with it.
       j.chest.rotation.z += (s === 'left' ? -1 : 1) * g * 0.02;
+      this.curlTarget[s] = Math.max(0.05, 0.28 - g * 0.25);
     }
   }
 
@@ -361,6 +390,7 @@ export class Animator {
     for (const s of ['left', 'right'] as const) {
       const axes = r.armAxes[s];
       j[`${s}LowerArm`].rotateOnAxis(axes.flex, 0.18 + Math.sin(t * 0.19 + (s === 'left' ? 0 : 2)) * 0.03);
+      this.curlTarget[s] = 0.2;
     }
   }
 }
