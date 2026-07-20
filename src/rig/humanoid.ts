@@ -39,6 +39,12 @@ export interface HumanoidRig {
   root: THREE.Object3D;
   joints: Record<JointName, THREE.Object3D>;
   rest: Record<JointName, RestPose>;
+  /**
+   * Multiplier converting meter-space positional offsets into the rig's
+   * local units (1 for the procedural rig; ~100 for centimeter-unit
+   * Mixamo skeletons under a 0.01-scaled armature).
+   */
+  positionScale: number;
 }
 
 const BONE_MAT = new THREE.MeshStandardMaterial({ color: 0x9fb4cc, roughness: 0.55 });
@@ -201,7 +207,7 @@ export function createHumanoid(): HumanoidRig {
     };
   }
 
-  return { root, joints, rest };
+  return { root, joints, rest, positionScale: 1 };
 }
 
 /** Reset every joint to its captured rest pose (call before applying layers). */

@@ -8,7 +8,8 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "test:e2e": "node e2e/make-wav.cjs && node e2e/drive.cjs"
+    "test:e2e": "node e2e/make-wav.cjs && node e2e/drive.cjs",
+    "fetch:model": "node scripts/fetch-model.mjs"
   },
   "dependencies": {
     "three": "^0.166.0"

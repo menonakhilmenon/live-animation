@@ -38,6 +38,13 @@ function stats(arr) {
   await page.goto(APP, { waitUntil: 'load', timeout: 30000 });
   await page.waitForSelector('#app canvas', { timeout: 20000 });
   await page.waitForFunction(() => window.__app?.rig && window.__app?.audio, null, { timeout: 10000 });
+  // If the GLB character is available it loads async and becomes the active
+  // rig; wait for it so the audio test below exercises the real model.
+  const hasModel = await page
+    .waitForFunction(() => !document.getElementById('btn-character').hidden, null, { timeout: 15000 })
+    .then(() => true)
+    .catch(() => false);
+  console.log('character model loaded:', hasModel);
   await page.waitForTimeout(1500);
   await page.screenshot({ path: path.join(ART, '01-idle.png') });
   console.log('canvas present, __app hook present');
@@ -91,6 +98,19 @@ function stats(arr) {
   console.log('mic rms=%s', mic.f.rms.toFixed(4));
   await page.screenshot({ path: path.join(ART, '03-mic.png') });
 
+  let toggleOk = true;
+  if (hasModel) {
+    console.log('--- 4.5 Character toggle');
+    const before = await page.evaluate(() => window.__app.rig.root.name);
+    await page.click('#btn-character');
+    await page.waitForTimeout(500);
+    const after = await page.evaluate(() => window.__app.rig.root.name);
+    toggleOk = before !== after;
+    console.log('rig before=%s after=%s', before, after);
+    await page.screenshot({ path: path.join(ART, '04-toggled.png') });
+    await page.click('#btn-character'); // back to the model
+  }
+
   console.log('--- 5. Console errors: %d', consoleErrors.length);
   consoleErrors.slice(0, 10).forEach((e) => console.log('  ERR:', e));
 
@@ -103,6 +123,7 @@ function stats(arr) {
   if (hips.range < 0.01) failures.push('hips did not bounce');
   if (arm.range < 0.05) failures.push('arms did not move');
   if (mic.f.rms < 0.005) failures.push('mic (fake device) produced no signal');
+  if (!toggleOk) failures.push('character toggle did not switch rigs');
   if (consoleErrors.length) failures.push(consoleErrors.length + ' console errors');
 
   console.log(failures.length ? 'RESULT: FAIL — ' + failures.join('; ') : 'RESULT: PASS');

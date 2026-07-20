@@ -8,7 +8,8 @@ animation clips, everything is generated live from the audio signal.
 
 ```sh
 npm install
-npm run dev     # opens a Vite dev server, usually http://localhost:5173
+npm run fetch:model   # optional: downloads the demo character (Xbot, ~3 MB)
+npm run dev           # opens a Vite dev server, usually http://localhost:5173
 ```
 
 Then either **Load audio file** (plays back with a scrub bar) or **Use
@@ -34,9 +35,14 @@ Animator (src/animation/animator.ts)
   head nod · arm swing/raise · shoulder shrug
       │
       ▼
-HumanoidRig (src/rig/humanoid.ts)
-  Named joint map (VRM/Mixamo-style names) + rest pose.
-  Currently a self-contained capsule humanoid built in code.
+HumanoidRig (src/rig/humanoid.ts, src/rig/loader.ts)
+  Named joint map (VRM/Mixamo-style names) + rest pose + positionScale.
+  Two implementations: a self-contained capsule humanoid built in code,
+  and a GLB loader that maps Mixamo-named bones onto the same interface
+  (lowering T-pose arms before capturing the rest pose). The demo model
+  (Xbot from the three.js examples) is fetched by `npm run fetch:model`
+  and not committed; without it the app falls back to the capsule rig.
+  Use the "Character" button to switch rigs at runtime.
       │
       ▼
 Three.js scene (src/main.ts) — rendered every frame
@@ -58,7 +64,6 @@ Design notes:
 
 ## Roadmap ideas
 
-- GLB/VRM model loading with bone-name mapping onto `HumanoidRig`
 - Tempo tracking (BPM estimation) to phase-lock the groove to the music
 - Style presets (calm sway / energetic dance / headbang) selected by energy
 - Lip sync from mid-band energy when a face mesh is available

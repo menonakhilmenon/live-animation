@@ -46,14 +46,17 @@ export class Animator {
     const r = this.rig;
     resetToRest(r);
     const j = r.joints;
+    // Positional offsets below are authored in meters; ps converts them to
+    // the rig's local units (see HumanoidRig.positionScale).
+    const ps = r.positionScale;
 
     // --- Breathing (idle layer) ---
     const breath = Math.sin(this.t * 1.9) * (0.02 - energy * 0.012);
     j.chest.rotation.x += breath;
-    j.chest.position.y += breath * 0.15;
+    j.chest.position.y += breath * 0.15 * ps;
 
     // --- Groove: bounce hips, flex knees to keep feet planted ---
-    j.hips.position.y -= bounce;
+    j.hips.position.y -= bounce * ps;
     const knee = bounce * 3.2;
     for (const s of ['left', 'right'] as const) {
       j[`${s}UpperLeg`].rotation.x -= knee * 0.9;
@@ -62,7 +65,7 @@ export class Animator {
     }
 
     // --- Weight shift / sway ---
-    j.hips.position.x += side * 0.05;
+    j.hips.position.x += side * 0.05 * ps;
     j.hips.rotation.z -= side * 0.06;
     j.spine.rotation.z += side * 0.08;
     j.chest.rotation.z += side * 0.05;
@@ -92,7 +95,7 @@ export class Animator {
     }
 
     // Shoulders shrug slightly with treble (hi-hats, snares).
-    j.leftShoulder.position.y += f.treble * 0.02;
-    j.rightShoulder.position.y += f.treble * 0.02;
+    j.leftShoulder.position.y += f.treble * 0.02 * ps;
+    j.rightShoulder.position.y += f.treble * 0.02 * ps;
   }
 }

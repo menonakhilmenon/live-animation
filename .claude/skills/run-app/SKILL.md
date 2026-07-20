@@ -40,6 +40,8 @@ Stop it with `lsof -ti:9222 -sTCP:LISTEN | xargs -r kill`.
 install it in a scratch dir and run from there, or `npm i -D playwright-core`.
 
 ```bash
+npm run fetch:model       # once: downloads public/models/Xbot.glb (else the
+                          # model steps are skipped and the capsule rig is used)
 node e2e/make-wav.cjs     # writes e2e/.artifacts/test.wav (120 BPM kick pattern)
 node e2e/drive.cjs        # exits 0 on PASS; env: APP_URL, CDP_URL
 ```

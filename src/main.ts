@@ -3,6 +3,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { AudioEngine } from './audio/engine';
 import { Animator } from './animation/animator';
 import { createHumanoid } from './rig/humanoid';
+import { loadGLBRig } from './rig/loader';
 import { setupUI, updateMeters } from './ui';
 
 const container = document.getElementById('app')!;
@@ -55,12 +56,42 @@ const grid = new THREE.GridHelper(12, 24, 0x2a3442, 0x1c2530);
 scene.add(grid);
 
 // --- Rig + systems ---
-const rig = createHumanoid();
-scene.add(rig.root);
+const capsuleRig = createHumanoid();
+scene.add(capsuleRig.root);
 
 const audio = new AudioEngine();
-const animator = new Animator(rig);
+let activeRig = capsuleRig;
+let animator = new Animator(activeRig);
 setupUI(audio);
+
+const setActiveRig = (rig: typeof capsuleRig) => {
+  activeRig = rig;
+  animator = new Animator(rig);
+  if (import.meta.env.DEV) {
+    (window as unknown as Record<string, unknown>).__app = { rig, audio };
+  }
+};
+
+// Load the real character model if present (see README: npm run fetch:model).
+// Falls back silently to the capsule rig when the GLB is missing.
+loadGLBRig('/models/Xbot.glb')
+  .then((glbRig) => {
+    scene.add(glbRig.root);
+    capsuleRig.root.visible = false;
+    setActiveRig(glbRig);
+
+    const btn = document.getElementById('btn-character') as HTMLButtonElement;
+    btn.hidden = false;
+    btn.textContent = 'Character: model';
+    btn.addEventListener('click', () => {
+      const useCapsule = activeRig === glbRig;
+      capsuleRig.root.visible = useCapsule;
+      glbRig.root.visible = !useCapsule;
+      setActiveRig(useCapsule ? capsuleRig : glbRig);
+      btn.textContent = useCapsule ? 'Character: capsule' : 'Character: model';
+    });
+  })
+  .catch((err) => console.warn('No character model loaded, using capsule rig:', err.message));
 
 // --- Loop ---
 const clock = new THREE.Clock();
@@ -75,7 +106,7 @@ renderer.setAnimationLoop(() => {
 
 // Dev-only hook so automated tests can sample the rig and audio features.
 if (import.meta.env.DEV) {
-  (window as unknown as Record<string, unknown>).__app = { rig, audio };
+  (window as unknown as Record<string, unknown>).__app = { rig: activeRig, audio };
 }
 
 window.addEventListener('resize', () => {
