@@ -1,9 +1,13 @@
 # live-animation
 
-Lifelike procedural humanoid behavior driven by audio. Feed it an audio
-file or your microphone and a character reacts like a person would — dancing
-to music, gesturing and lip-syncing to speech, idling in silence. No
-pre-baked animation clips; everything is generated from the audio signal.
+Lifelike humanoid behavior driven by audio — and a generative animation
+suite on top. Feed it an audio file or your microphone and a character
+reacts like a person would: dancing to music, gesturing and lip-syncing to
+speech, idling in silence. Or type text, pick an emotion, and hit
+**Speak**: a local ML pipeline (Kokoro TTS + EMAGE co-speech gesture
+generation, optionally emotion-fine-tuned on BEAT2) synthesizes the voice
+and generates full-body gestures that play back on the character, in sync
+with procedural lip sync, blinking, and mood.
 
 ## Quick start
 
@@ -17,6 +21,13 @@ npm run dev           # opens a Vite dev server, usually http://localhost:5173
 Then either **Load audio file** (analyzed in full on load, plays with a
 scrub bar) or **Use microphone** (live causal analysis, no playback). Drag
 to orbit the camera; the **Character** button cycles capsule / Xbot / VRM.
+
+For the **Speak** panel (text + emotion → generated speech and gestures),
+also start the Python sidecar — setup and details in `ml/README.md`:
+
+```sh
+ml/.venv/bin/python ml/server.py    # localhost:8600
+```
 
 `npm run build` type-checks and produces a static bundle in `dist/`.
 `npm run test:e2e` runs the headless end-to-end suite (see
@@ -90,6 +101,18 @@ Design notes:
 formant-shaped synthetic speech. The e2e suite asserts beat-grid and
 downbeat error in milliseconds, drop/section detection, speech
 classification, mode-appropriate body behavior, lip sync, and blinking.
+
+## Generative animation (ml/)
+
+The generative side treats motion like image generation treats pixels:
+EMAGE compresses gesture into VQ codebook tokens and a masked transformer
+generates token sequences conditioned on audio (and, after our fine-tune,
+an emotion embedding — textual inversion applied to gesture style).
+Sequences come back as SMPL-X poses, are converted to a rig-agnostic
+**MotionClip** (world-space rotation deltas from T-pose), and play on any
+of the three rigs through `src/animation/clip.ts`, which retargets via
+each rig's captured T-pose world orientations. Research notes, model
+comparison, and architecture decisions: `docs/generative-animation.md`.
 
 ## Roadmap ideas
 
