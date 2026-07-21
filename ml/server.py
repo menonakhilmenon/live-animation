@@ -201,8 +201,11 @@ def gestures(
             lat[rk] if l > 0 and c == 0 else None,
         )
         fi, fl = pick("cls_face", "rec_face", cfg.cf, cfg.lf)
-        ui, ul = pick("cls_upper", "rec_upper", cfg.cu, cfg.lu, 0.9)
-        hi, hl = pick("cls_hands", "rec_hands", cfg.ch, cfg.lh, 0.9)
+        # Measured against held-out mocap: upper 0.8 puts wrist velocity at
+        # 39.8 deg/s (GT 35.3; 0.9 ran 47.2) with posture unchanged; hands
+        # (fingers) 0.7 calms digit motion.
+        ui, ul = pick("cls_upper", "rec_upper", cfg.cu, cfg.lu, 0.8)
+        hi, hl = pick("cls_hands", "rec_hands", cfg.ch, cfg.lh, 0.7)
         li, ll = pick("cls_lower", "rec_lower", cfg.cl, cfg.ll)
         pred = motion_vq.decode(
             face_latent=fl, upper_latent=ul, lower_latent=ll, hands_latent=hl,

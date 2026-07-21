@@ -27,7 +27,11 @@ sys.path.insert(0, os.path.join(ROOT, "vendor", "PantoMatrix"))
 from generate import poses_to_clip  # noqa: E402
 from train_emotion import DATA, emotion_of_stem  # noqa: E402
 
-UPPER = {"spine": [3], "chest": [6, 9], "head": [12, 15], "arms": [16, 17, 18, 19], "hands": [20, 21]}
+UPPER = {
+    "spine": [3], "chest": [6, 9], "head": [12, 15],
+    "arms": [16, 17, 18, 19], "wrists": [20, 21],
+    "fingers": list(range(25, 55)),
+}
 
 
 def motion_stats(poses):
@@ -51,6 +55,8 @@ def main():
     ap.add_argument("--seconds", type=float, default=10.0)
     ap.add_argument("--out", default=os.path.join(ROOT, "..", "e2e", ".artifacts", "compare"))
     ap.add_argument("--temperature", type=float, default=0.0, help="VQ sampling temperature (0 = argmax)")
+    ap.add_argument("--hands-temperature", type=float, default=None,
+                    help="hands head temperature (default: same as --temperature)")
     ap.add_argument("--seed", type=int, default=7)
     ap.add_argument("--no-seed-pose", action="store_true")
     args = ap.parse_args()
@@ -102,14 +108,15 @@ def main():
     with torch.no_grad():
         lat = model.inference(audio_t, speaker, motion_vq, masked_motion=seed_motion, mask=seed_mask)
         cfg = model.cfg
-        pick = lambda ck, rk, c, l: (  # noqa: E731
-            sample_tokens(lat[ck].cpu(), args.temperature, generator=gen).to(device) if c > 0 else None,
+        hands_t = args.hands_temperature if args.hands_temperature is not None else args.temperature
+        pick = lambda ck, rk, c, l, temp: (  # noqa: E731
+            sample_tokens(lat[ck].cpu(), temp, generator=gen).to(device) if c > 0 else None,
             lat[rk] if l > 0 and c == 0 else None,
         )
-        fi, fl = pick("cls_face", "rec_face", cfg.cf, cfg.lf)
-        ui, ul = pick("cls_upper", "rec_upper", cfg.cu, cfg.lu)
-        hi, hl = pick("cls_hands", "rec_hands", cfg.ch, cfg.lh)
-        li, ll = pick("cls_lower", "rec_lower", cfg.cl, cfg.ll)
+        fi, fl = pick("cls_face", "rec_face", cfg.cf, cfg.lf, args.temperature)
+        ui, ul = pick("cls_upper", "rec_upper", cfg.cu, cfg.lu, args.temperature)
+        hi, hl = pick("cls_hands", "rec_hands", cfg.ch, cfg.lh, hands_t)
+        li, ll = pick("cls_lower", "rec_lower", cfg.cl, cfg.ll, args.temperature)
         pred = motion_vq.decode(
             face_latent=fl, upper_latent=ul, lower_latent=ll, hands_latent=hl,
             face_index=fi, upper_index=ui, lower_index=li, hands_index=hi,

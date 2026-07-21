@@ -178,8 +178,10 @@ def main() -> None:
     ap.add_argument("--npz-out", help="also save the raw SMPL-X npz here")
     ap.add_argument("--free-feet", action="store_true", help="disable foot IK pinning")
     ap.add_argument("--cpu", action="store_true")
-    ap.add_argument("--temperature", type=float, default=0.9,
-                    help="VQ sampling temperature for upper body/hands (0 = argmax)")
+    ap.add_argument("--temperature", type=float, default=0.8,
+                    help="VQ sampling temperature for the upper body (0 = argmax)")
+    ap.add_argument("--hands-temperature", type=float, default=0.7,
+                    help="VQ sampling temperature for the hands")
     ap.add_argument("--seed", type=int, default=7)
     args = ap.parse_args()
 
@@ -217,7 +219,7 @@ def main() -> None:
         )
         face_index, face_latent = pick("cls_face", "rec_face", cfg.cf, cfg.lf)
         upper_index, upper_latent = pick("cls_upper", "rec_upper", cfg.cu, cfg.lu, args.temperature)
-        hands_index, hands_latent = pick("cls_hands", "rec_hands", cfg.ch, cfg.lh, args.temperature)
+        hands_index, hands_latent = pick("cls_hands", "rec_hands", cfg.ch, cfg.lh, args.hands_temperature)
         lower_index, lower_latent = pick("cls_lower", "rec_lower", cfg.cl, cfg.ll)
         pred = motion_vq.decode(
             face_latent=face_latent, upper_latent=upper_latent,
