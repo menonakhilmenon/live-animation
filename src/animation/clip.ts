@@ -104,6 +104,16 @@ export class ClipPlayer {
     const f1 = Math.min(f0 + 1, frames - 1);
     const mix = ft - f0;
 
+    // Ease in from rest and back out near the end (non-looping clips) so
+    // playback never pops between procedural pose and generated pose.
+    const FADE = 0.4;
+    let w = Math.min(1, this.time / FADE);
+    if (!clip.loop) {
+      const remain = frames / clip.fps - this.time;
+      w = Math.min(w, Math.max(0, remain / FADE));
+    }
+    w = w * w * (3 - 2 * w);
+
     // Hips translation: world-space meter offsets → hips-parent local units.
     if (clip.hipsPosition) {
       const p0 = clip.hipsPosition[f0];
@@ -118,7 +128,7 @@ export class ClipPlayer {
         hips.parent.getWorldQuaternion(tmpParent);
         tmpVec.applyQuaternion(tmpParent.invert());
       }
-      hips.position.addScaledVector(tmpVec, rig.positionScale);
+      hips.position.addScaledVector(tmpVec, rig.positionScale * w);
     }
 
     // Rotations, parents before children so each getWorldQuaternion below
@@ -135,10 +145,11 @@ export class ClipPlayer {
       tmpQa.multiply(rig.tposeWorld[joint]);
       if (node.parent) {
         node.parent.getWorldQuaternion(tmpParent);
-        node.quaternion.copy(tmpParent.invert().multiply(tmpQa));
-      } else {
-        node.quaternion.copy(tmpQa);
+        tmpQa.premultiply(tmpParent.invert());
       }
+      // Fade weight blends from the rest pose the caller just applied.
+      if (w < 1) node.quaternion.slerp(tmpQa, w);
+      else node.quaternion.copy(tmpQa);
       node.updateMatrixWorld(true);
     }
 

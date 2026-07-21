@@ -43,6 +43,7 @@ export function setupUI(engine: AudioEngine, playClip: (clip: MotionClip) => voi
   const speakBtn = document.getElementById('btn-speak') as HTMLButtonElement;
   const speakText = document.getElementById('speak-text') as HTMLTextAreaElement;
   const speakEmotion = document.getElementById('speak-emotion') as HTMLSelectElement;
+  const speakIntensity = document.getElementById('speak-intensity') as HTMLInputElement;
   const speakStatus = document.getElementById('speak-status')!;
 
   speakBtn.addEventListener('click', async () => {
@@ -54,7 +55,11 @@ export function setupUI(engine: AudioEngine, playClip: (clip: MotionClip) => voi
       const res = await fetch(`${SIDECAR}/animate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, emotion: speakEmotion.value }),
+        body: JSON.stringify({
+          text,
+          emotion: speakEmotion.value,
+          intensity: Number(speakIntensity.value),
+        }),
       });
       if (!res.ok) throw new Error(`sidecar ${res.status}: ${await res.text()}`);
       const { clip, audioB64 } = (await res.json()) as { clip: MotionClip; audioB64: string };

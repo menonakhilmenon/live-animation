@@ -81,7 +81,19 @@ def get_models():
     )
     if os.path.isdir(EMOTION_CKPT):
         print(f"using emotion-conditioned fine-tune: {EMOTION_CKPT}", flush=True)
-        _models["emage"] = EmageAudioModel.from_pretrained(EMOTION_CKPT).to(device).eval()
+        model = EmageAudioModel.from_pretrained(EMOTION_CKPT).to(device).eval()
+        # Widen each emotion embedding by one SCRATCH row used to hold a
+        # per-request neutral↔emotion interpolation (intensity control).
+        import torch.nn as nn
+
+        for name in ("speaker_embedding_body", "speaker_embedding_face"):
+            old = getattr(model, name)
+            new = nn.Embedding(old.num_embeddings + 1, old.embedding_dim).to(device)
+            new.weight.data[: old.num_embeddings] = old.weight.data
+            new.weight.data[-1] = old.weight.data[0]
+            setattr(model, name, new)
+        _models["scratch_row"] = model.speaker_embedding_body.num_embeddings - 1
+        _models["emage"] = model
         _models["emotion_conditioned"] = True
     else:
         _models["emage"] = EmageAudioModel.from_pretrained(hub).to(device).eval()
@@ -107,7 +119,9 @@ def tts(text: str, voice: str, speed: float):
     return np.concatenate(chunks), words
 
 
-def gestures(audio: np.ndarray, sr: int, amplitude: float, emotion_id: int = 0) -> dict:
+def gestures(
+    audio: np.ndarray, sr: int, amplitude: float, emotion_id: int = 0, intensity: float = 1.0
+) -> dict:
     import librosa
     import torch
     import torch.nn.functional as F
@@ -118,8 +132,16 @@ def gestures(audio: np.ndarray, sr: int, amplitude: float, emotion_id: int = 0) 
         audio = librosa.resample(audio, orig_sr=sr, target_sr=model.cfg.audio_sr)
     audio_t = torch.from_numpy(audio.astype(np.float32)).to(device).unsqueeze(0)
     # With the fine-tuned model the "speaker" slot IS the emotion id
-    # (see ml/train_emotion.py); the base model only has row 0.
+    # (see ml/train_emotion.py); the base model only has row 0. Fractional
+    # intensity interpolates neutral→emotion into the scratch row.
     sid = emotion_id if m["emotion_conditioned"] else 0
+    if m["emotion_conditioned"] and 0.0 <= intensity < 1.0 and emotion_id != 0:
+        scratch = m["scratch_row"]
+        with torch.no_grad():
+            for name in ("speaker_embedding_body", "speaker_embedding_face"):
+                w = getattr(model, name).weight
+                w.data[scratch] = (1 - intensity) * w.data[0] + intensity * w.data[emotion_id]
+        sid = scratch
     speaker = torch.full((1, 1), sid).long().to(device)
     with torch.no_grad():
         lat = model.inference(audio_t, speaker, motion_vq, masked_motion=None, mask=None)
@@ -175,6 +197,7 @@ def create_app():
         audioB64: str | None = None
         emotion: str = "neutral"
         voice: str = "af_heart"
+        intensity: float = 1.0  # 0 = neutral gestures, 1 = full emotion
 
     @app.get("/health")
     def health():
@@ -199,14 +222,16 @@ def create_app():
         else:
             raise HTTPException(400, "need text or audioB64")
 
-        clip = gestures(audio, sr, amplitude, emotion_id)
-        clip["mood"] = mood
+        s = max(0.0, min(1.0, req.intensity))
+        clip = gestures(audio, sr, 1.0 + (amplitude - 1.0) * s, emotion_id, s)
+        clip["mood"] = mood * s
         return {
             "clip": clip,
             "audioB64": wav_b64(audio, sr),
             "words": words,
             "emotion": req.emotion,
-            "mood": mood,
+            "mood": mood * s,
+            "intensity": s,
         }
 
     return app
