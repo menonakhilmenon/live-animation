@@ -24,6 +24,11 @@
       #panel button:hover { background: #2c3d50; }
       #panel button.active { background: #3b5b7d; border-color: #5c86b0; }
       #audio-el { width: 100%; height: 30px; }
+      #panel textarea, #panel select {
+        background: #1a2330; color: #dfe6f0; border: 1px solid #2a3442;
+        border-radius: 6px; padding: 5px 8px; font: inherit; resize: vertical;
+      }
+      #panel select { flex: 1; }
       .meter { height: 6px; background: #1a2330; border-radius: 3px; overflow: hidden; }
       .meter > div { height: 100%; width: 0%; border-radius: 3px; }
       #m-rms > div { background: #6fc2ff; }
@@ -45,6 +50,20 @@
       </div>
       <input id="file-input" type="file" accept="audio/*" hidden />
       <audio id="audio-el" controls hidden></audio>
+      <label class="meter-label">speak (generated gestures)</label>
+      <textarea id="speak-text" rows="2" placeholder="Type something for the character to say…"></textarea>
+      <div class="row">
+        <select id="speak-emotion">
+          <option value="neutral">neutral</option>
+          <option value="happy">happy</option>
+          <option value="excited">excited</option>
+          <option value="calm">calm</option>
+          <option value="sad">sad</option>
+          <option value="angry">angry</option>
+        </select>
+        <button id="btn-speak">Speak</button>
+      </div>
+      <label class="meter-label" id="speak-status"></label>
       <label class="meter-label">level</label>
       <div class="meter" id="m-rms"><div></div></div>
       <label class="meter-label">bass</label>

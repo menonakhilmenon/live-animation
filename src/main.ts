@@ -70,7 +70,7 @@ const rigs: RigEntry[] = [{ name: 'capsule', rig: capsuleRig }];
 let rigIdx = 0;
 let activeRig = capsuleRig;
 let animator = new Animator(activeRig);
-setupUI(audio);
+setupUI(audio, (clip) => animator.playClip(clip));
 
 const charBtn = document.getElementById('btn-character') as HTMLButtonElement;
 

@@ -11,6 +11,9 @@ import { ema } from '../audio/features';
  *  - mood: happier as musical energy rises, relaxed in silence
  */
 export class FaceAnimator {
+  /** External emotional bias (e.g. from a generated clip's emotion). */
+  moodBias = 0;
+
   private aa = 0;
   private ih = 0;
   private ou = 0;
@@ -58,8 +61,9 @@ export class FaceAnimator {
     this.face.setBlink(blink);
 
     // --- Mood ---
-    const target =
+    const base =
       f.mode === 'music' ? 0.15 + f.section * 0.5 : f.mode === 'speech' ? 0.1 : -0.3;
+    const target = Math.max(-1, Math.min(1, base + this.moodBias));
     this.mood = ema(this.mood, target, 1.2, dt);
     this.face.setMood(this.mood);
   }

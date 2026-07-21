@@ -26,6 +26,8 @@ export interface MotionClip {
    * right for upper-body gesture clips; full-body locomotion sets false). */
   pinFeet?: boolean;
   loop?: boolean;
+  /** Emotional bias for the face while this clip plays (-1 sad … +1 happy). */
+  mood?: number;
 }
 
 /** Parent-first application order (ancestors before descendants). */
@@ -76,6 +78,10 @@ export class ClipPlayer {
 
   get currentTime(): number {
     return this.time;
+  }
+
+  get mood(): number {
+    return this.clip?.mood ?? 0;
   }
 
   /**

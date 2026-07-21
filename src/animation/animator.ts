@@ -108,10 +108,12 @@ export class Animator {
     if (this.clipPlayer.active) {
       resetToRest(this.rig);
       this.ensureFootAnchors();
+      if (this.faceAnimator) this.faceAnimator.moodBias = this.clipPlayer.mood;
       const pin = this.clipPlayer.apply(this.rig, dt);
       this.finishFrame(f, dt, pin);
       return;
     }
+    if (this.faceAnimator) this.faceAnimator.moodBias = 0;
 
     // Sustained intensity (slow spring) gates most layers so the character
     // relaxes to idle in silence and commits to the groove on loud sections.
