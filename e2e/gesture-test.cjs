@@ -46,6 +46,14 @@ function check(name, ok, detail) {
   await page
     .waitForFunction(() => window.__app.rigCount >= 3, null, { timeout: 20000 })
     .catch(() => {});
+  // Optionally cycle to a specific rig (RIG=glb-humanoid node e2e/gesture-test.cjs)
+  if (process.env.RIG) {
+    for (let i = 0; i < 4; i++) {
+      if ((await page.evaluate(() => window.__app.rig.root.name)) === process.env.RIG) break;
+      await page.click('#btn-character');
+      await page.waitForTimeout(500);
+    }
+  }
   const rigName = await page.evaluate(() => window.__app.rig.root.name);
   console.log('rig: %s', rigName);
 

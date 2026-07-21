@@ -77,14 +77,34 @@ export async function loadGLBRig(url: string): Promise<HumanoidRig> {
     throw new Error(`loadGLBRig(${url}): unmapped joints: ${missing.join(', ')}`);
   }
 
-  const rig = finalizeRig(root, joints);
-
-  // Finger bones (Mixamo naming: LeftHandIndex1..3 etc.).
+  // Finger bones (Mixamo naming: LeftHandIndex1..3 etc.). World T-pose
+  // orientations are captured NOW, before finalizeRig's arms-down
+  // calibration, so generated clips can retarget articulated fingers.
+  const DIGIT_VRM: Record<string, string> = {
+    thumb: 'Thumb', index: 'Index', middle: 'Middle', ring: 'Ring', pinky: 'Little',
+  };
   const fingerNodes = { left: [] as THREE.Object3D[], right: [] as THREE.Object3D[] };
+  const fingerRetarget: NonNullable<HumanoidRig['fingerRetarget']> = {};
+  root.updateMatrixWorld(true);
   gltf.scene.traverse((obj) => {
-    const m = normalizeBoneName(obj.name).match(/^(left|right)hand(thumb|index|middle|ring|pinky)\d$/);
-    if (m) fingerNodes[m[1] as 'left' | 'right'].push(obj);
+    const m = normalizeBoneName(obj.name).match(/^(left|right)hand(thumb|index|middle|ring|pinky)(\d)$/);
+    if (!m) return;
+    fingerNodes[m[1] as 'left' | 'right'].push(obj);
+    const digit = DIGIT_VRM[m[2]];
+    const segs = digit === 'Thumb'
+      ? ['Metacarpal', 'Proximal', 'Distal']
+      : ['Proximal', 'Intermediate', 'Distal'];
+    const seg = segs[Number(m[3]) - 1];
+    if (seg) {
+      fingerRetarget[`${m[1]}${digit}${seg}`] = {
+        node: obj,
+        tposeWorld: obj.getWorldQuaternion(new THREE.Quaternion()),
+      };
+    }
   });
+
+  const rig = finalizeRig(root, joints);
+  if (Object.keys(fingerRetarget).length) rig.fingerRetarget = fingerRetarget;
   if (fingerNodes.left.length || fingerNodes.right.length) {
     rig.fingers = collectFingers(
       root,
