@@ -56,6 +56,16 @@ def get_models():
     from models.emage_audio import EmageAudioModel, EmageVAEConv, EmageVQModel, EmageVQVAEConv
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
+    if device == "cuda":
+        # Other services (ollama, user's TTS) may own nearly all VRAM;
+        # EMAGE needs ~1 GiB. Fall back to CPU (~30 s per generation).
+        try:
+            free, _ = torch.cuda.mem_get_info()
+            if free < 1.2 * 2**30:
+                print(f"only {free / 2**30:.1f} GiB VRAM free — using CPU", flush=True)
+                device = "cpu"
+        except Exception:
+            device = "cpu"
     hub = "H-Liu1997/emage_audio"
     print(f"loading EMAGE ({device}) + Kokoro (cpu) ...", flush=True)
     _models["motion_vq"] = (

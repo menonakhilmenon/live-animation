@@ -119,12 +119,17 @@ Decisions and reasons:
 
 ## Roadmap
 
-1. ~~ClipPlayer + canonical clip format + cross-rig e2e~~ (done, fa9a77a)
-2. EMAGE inference locally: speech WAV → SMPL-X → MotionClip → plays in
-   browser on VRM (e2e-verified).
-3. TTS leg: Kokoro (Apache-2.0, 82M, CPU real-time, native word timestamps)
-   → text+emotion input produces audio + lip-sync-aligned gestures.
-4. Training: BEAT2 subset → emotion-conditioned gesture model on the 9070 XT
-   (fine-tune EMAGE or train compact VQ+transformer; LoRA-style emotion
-   adapters as the cheap fallback).
+1. ~~ClipPlayer + canonical clip format + cross-rig e2e~~ (fa9a77a)
+2. ~~EMAGE inference locally → MotionClip → browser VRM~~ (512584b)
+3. ~~TTS leg: Kokoro + Speak panel (text+emotion → talking avatar)~~ (8bca1f5)
+4. ~~Training: emotion-conditioned EMAGE on BEAT2~~ — textual-inversion
+   fine-tune (12k params, --embeddings-only) on scott, converged at
+   ~2.5k/6k steps (val 44.2 from 64; plateau since 1.25k). Result: each
+   emotion's generation diverges 0.40–0.65 rad from neutral on the same
+   audio, with sensible signatures (happiness most divergent + energetic,
+   fear/surprise biggest hand travel, neutral calmest). ml/eval_emotion.py
+   reproduces the table; the sidecar auto-loads the checkpoint.
 5. Facial channel: EMAGE's FLAME face output → VRM expressions mapping.
+6. Longer/full-model training when the GPU is free (current run fit in
+   ~1.2 GiB because resident LLM/TTS services hold the rest); more
+   speakers; explicit emotion CFG; DiP/MoMask for text-described actions.
