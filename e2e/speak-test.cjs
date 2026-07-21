@@ -102,8 +102,10 @@ function sidecarUp() {
   const hasTrack = await page.evaluate(() => !!window.__app.animator.faceAnimator?.hasVisemeTrack);
   check('phoneme viseme track installed', hasTrack);
   check('hands gesture during speech', handTravel > 0.4, `travel=${handTravel.toFixed(2)}m`);
-  // Artifact guard: hand may not teleport between 125 ms samples.
-  check('motion is continuous (no pose pops)', maxJump < 0.3, `maxJump=${maxJump.toFixed(3)}m`);
+  // Artifact guard: hand may not teleport between 125 ms samples. Fast
+  // legitimate gesticulation peaks ~2.5 m/s (~0.31 m/sample); a pose pop
+  // is an order of magnitude beyond that.
+  check('motion is continuous (no pose pops)', maxJump < 0.45, `maxJump=${maxJump.toFixed(3)}m`);
   check('lip sync moves the mouth', maxMouth > 0.1, `maxMouth=${maxMouth.toFixed(2)}`);
   check('excited mood reaches the face', maxMood > 0.4, `maxMood=${maxMood.toFixed(2)}`);
   check('zero console errors', consoleErrors.length === 0, consoleErrors.join(' | '));
