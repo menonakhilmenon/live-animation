@@ -30,15 +30,20 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "vendor", "PantoMatri
 
 from generate import SMPLX_PARENTS, SMPLX_TO_JOINT, axis_angle_to_quat, poses_to_clip  # noqa: E402
 
-# emotion -> (gesture amplitude, tts speed, face mood -1..1)
+# emotion -> (gesture amplitude, tts speed, face mood -1..1, BEAT emotion id)
+# The BEAT id feeds the fine-tuned emotion embedding when a trained
+# checkpoint exists (ml/train_emotion.py); BEAT order: 0 neutral,
+# 1 happiness, 2 anger, 3 sadness, 4 contempt, 5 surprise, 6 fear, 7 disgust.
 EMOTIONS = {
-    "neutral": (1.0, 1.0, 0.0),
-    "happy": (1.15, 1.05, 0.7),
-    "excited": (1.35, 1.12, 1.0),
-    "calm": (0.8, 0.92, 0.15),
-    "sad": (0.6, 0.85, -0.6),
-    "angry": (1.25, 1.08, -0.9),
+    "neutral": (1.0, 1.0, 0.0, 0),
+    "happy": (1.15, 1.05, 0.7, 1),
+    "excited": (1.3, 1.12, 1.0, 5),
+    "calm": (0.8, 0.92, 0.15, 0),
+    "sad": (0.6, 0.85, -0.6, 3),
+    "angry": (1.2, 1.08, -0.9, 2),
 }
+
+EMOTION_CKPT = os.path.join(os.path.dirname(__file__), "checkpoints", "emage_emotion")
 
 _models = {}
 
@@ -64,7 +69,13 @@ def get_models():
         .to(device)
         .eval()
     )
-    _models["emage"] = EmageAudioModel.from_pretrained(hub).to(device).eval()
+    if os.path.isdir(EMOTION_CKPT):
+        print(f"using emotion-conditioned fine-tune: {EMOTION_CKPT}", flush=True)
+        _models["emage"] = EmageAudioModel.from_pretrained(EMOTION_CKPT).to(device).eval()
+        _models["emotion_conditioned"] = True
+    else:
+        _models["emage"] = EmageAudioModel.from_pretrained(hub).to(device).eval()
+        _models["emotion_conditioned"] = False
     _models["tts"] = KPipeline(lang_code="a", device="cpu", repo_id="hexgrad/Kokoro-82M")
     _models["device"] = device
     print("models ready", flush=True)
@@ -86,7 +97,7 @@ def tts(text: str, voice: str, speed: float):
     return np.concatenate(chunks), words
 
 
-def gestures(audio: np.ndarray, sr: int, amplitude: float) -> dict:
+def gestures(audio: np.ndarray, sr: int, amplitude: float, emotion_id: int = 0) -> dict:
     import librosa
     import torch
     import torch.nn.functional as F
@@ -96,7 +107,10 @@ def gestures(audio: np.ndarray, sr: int, amplitude: float) -> dict:
     if sr != model.cfg.audio_sr:
         audio = librosa.resample(audio, orig_sr=sr, target_sr=model.cfg.audio_sr)
     audio_t = torch.from_numpy(audio.astype(np.float32)).to(device).unsqueeze(0)
-    speaker = torch.zeros(1, 1).long().to(device)
+    # With the fine-tuned model the "speaker" slot IS the emotion id
+    # (see ml/train_emotion.py); the base model only has row 0.
+    sid = emotion_id if m["emotion_conditioned"] else 0
+    speaker = torch.full((1, 1), sid).long().to(device)
     with torch.no_grad():
         lat = model.inference(audio_t, speaker, motion_vq, masked_motion=None, mask=None)
         cfg = model.cfg
@@ -160,7 +174,7 @@ def create_app():
     def animate(req: AnimateRequest):
         if req.emotion not in EMOTIONS:
             raise HTTPException(400, f"unknown emotion {req.emotion!r}; one of {list(EMOTIONS)}")
-        amplitude, speed, mood = EMOTIONS[req.emotion]
+        amplitude, speed, mood, emotion_id = EMOTIONS[req.emotion]
         if req.text:
             audio, words = tts(req.text, req.voice, speed)
             sr = 24000
@@ -175,7 +189,7 @@ def create_app():
         else:
             raise HTTPException(400, "need text or audioB64")
 
-        clip = gestures(audio, sr, amplitude)
+        clip = gestures(audio, sr, amplitude, emotion_id)
         clip["mood"] = mood
         return {
             "clip": clip,
