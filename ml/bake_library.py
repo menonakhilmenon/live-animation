@@ -134,12 +134,89 @@ def loopify(q, fps, blend_s=1.0):
     return out
 
 
+# Ground-truth sources per loop: BEAT2 recordings whose sequence numbers
+# carry the emotion (see train_emotion.emotion_of_stem). Real mocap through
+# the same converter beats generated motion: measured 72° vs 42° mean arm
+# posture and 5x hand velocity vs EMAGE argmax decoding.
+GT_SOURCES = {
+    "talk_neutral": ["2_scott_0_9_9", "2_scott_0_10_10", "1_wayne_0_9_9"],
+    "talk_happiness": ["2_scott_0_66_66", "2_scott_0_67_67", "1_wayne_0_66_66"],
+    "talk_anger": ["2_scott_0_74_74", "2_scott_0_75_75", "1_wayne_0_74_74"],
+    "talk_sadness": ["2_scott_0_82_82", "2_scott_0_83_83", "1_wayne_0_82_82"],
+}
+
+
+def liveliest_window(poses, audio, want, fps=30, sr=16000):
+    """Start frame of the window with the most hand/arm motion while the
+    speaker is actually talking (audio RMS gate)."""
+    aa = poses.reshape(len(poses), -1, 3)
+    ang = np.linalg.norm(aa[:, [16, 17, 18, 19, 20, 21]], axis=-1)
+    vel = np.zeros(len(poses))
+    vel[1:] = np.abs(np.diff(ang, axis=0)).mean(axis=1)
+    hop = sr // fps
+    rms = np.array([
+        np.sqrt(np.mean(audio[i * hop : (i + 1) * hop] ** 2) + 1e-12)
+        for i in range(min(len(poses), len(audio) // hop))
+    ])
+    rms = np.resize(rms, len(poses))
+    score = vel * (rms > np.percentile(rms, 30))
+    if len(score) <= want:
+        return 0
+    csum = np.convolve(score, np.ones(want), "valid")
+    return int(np.argmax(csum))
+
+
+def bake_gt(out_dir, seconds):
+    from train_emotion import DATA
+
+    import librosa
+
+    for name, stems in GT_SOURCES.items():
+        picked = None
+        for stem in stems:
+            p = os.path.join(DATA, "smplxflame_30", stem + ".npz")
+            if os.path.exists(p):
+                picked = stem
+                break
+        if not picked:
+            print(f"skip {name}: no source recording found", flush=True)
+            continue
+        npz = np.load(os.path.join(DATA, "smplxflame_30", picked + ".npz"), allow_pickle=True)
+        audio, _ = librosa.load(os.path.join(DATA, "wave16k", picked + ".wav"), sr=16000)
+        poses = npz["poses"].astype(np.float32)
+        want = int(seconds * 30)
+        s = liveliest_window(poses, audio, want)
+        seg = poses[s : s + want].reshape(-1, 55, 3)
+        t = seg.shape[0]
+
+        seg = remove_root_yaw(seg)
+        from generate import axis_angle_to_quat
+
+        q = axis_angle_to_quat(seg)
+        q = smooth_quats(q, passes=1)  # real mocap needs only a touch
+        q = loopify(q, 30)
+        q = rotate_to_calmest_start(q)
+        aa = quat_to_axis_angle(normalize(q))
+        clip = poses_to_clip(aa.reshape(t, -1), np.zeros((t, 3), dtype=np.float32), 30, pin_feet=True)
+        del clip["hipsPosition"]
+        path = os.path.join(out_dir, f"{name}.json")
+        with open(path, "w") as f:
+            json.dump(clip, f)
+        print(f"baked {name} from GT {picked} @frame {s}: {t} frames -> {path}", flush=True)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default=os.path.join(os.path.dirname(__file__), "..", "public", "anims"))
     ap.add_argument("--seconds", type=float, default=7.0)
+    ap.add_argument("--generated", action="store_true",
+                    help="bake from EMAGE generations instead of ground-truth mocap")
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
+
+    if not args.generated:
+        bake_gt(args.out, args.seconds)
+        return
 
     import torch
     import torch.nn.functional as F
