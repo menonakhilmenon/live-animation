@@ -3,6 +3,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { AudioEngine } from './audio/engine';
 import { Animator } from './animation/animator';
 import { MotionClip } from './animation/clip';
+import { convertGLTFAnimations, loadClipJSON } from './animation/library';
 import { createHumanoid } from './rig/humanoid';
 import { loadGLBRig } from './rig/loader';
 import { loadVRMRig } from './rig/vrm';
@@ -69,9 +70,22 @@ interface RigEntry {
 const rigs: RigEntry[] = [{ name: 'capsule', rig: capsuleRig }];
 let rigIdx = 0;
 let activeRig = capsuleRig;
+/** Shared prebaked-animation library (rig-agnostic canonical clips). */
+const library: Record<string, MotionClip> = {};
+// Baked talk/idle loops (ml/bake_library.py output). Missing files are fine.
+for (const name of ['idle_calm', 'talk_neutral', 'talk_happiness', 'talk_anger', 'talk_sadness']) {
+  loadClipJSON(`/anims/${name}.json`)
+    .then((clip) => {
+      library[name] = clip;
+      animator.schedulePlayer.setLibrary(library);
+    })
+    .catch(() => {});
+}
+
 let animator = new Animator(activeRig);
 setupUI(audio, {
   playClip: (clip) => animator.playClip(clip),
+  playSchedule: (schedule, clock) => animator.playSchedule(schedule, clock),
   setVisemes: (events, clock) => animator.faceAnimator?.setVisemeTrack(events, clock),
 });
 
@@ -81,6 +95,7 @@ const setActiveRig = (idx: number) => {
   rigIdx = idx;
   activeRig = rigs[idx].rig;
   animator = new Animator(activeRig);
+  animator.schedulePlayer.setLibrary(library);
   for (const [i, entry] of rigs.entries()) entry.rig.root.visible = i === idx;
   charBtn.textContent = `Character: ${rigs[idx].name}`;
   charBtn.hidden = rigs.length < 2;
@@ -105,6 +120,10 @@ loadGLBRig('/models/Xbot.glb')
   .then((rig) => {
     scene.add(rig.root);
     rigs.push({ name: 'model', rig });
+    // Harvest the embedded clips (idle/agree/headShake/...) into the
+    // shared library — converted to the canonical rig-agnostic format.
+    Object.assign(library, convertGLTFAnimations(rig, rig.sourceAnimations ?? []));
+    animator.schedulePlayer.setLibrary(library);
     setActiveRig(rigs[rigIdx].name === 'capsule' ? rigs.length - 1 : rigIdx);
   })
   .catch((err) => console.warn('No GLB model loaded:', err.message));

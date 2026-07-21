@@ -105,6 +105,7 @@ export async function loadGLBRig(url: string): Promise<HumanoidRig> {
 
   const rig = finalizeRig(root, joints);
   if (Object.keys(fingerRetarget).length) rig.fingerRetarget = fingerRetarget;
+  rig.sourceAnimations = gltf.animations ?? [];
   if (fingerNodes.left.length || fingerNodes.right.length) {
     rig.fingers = collectFingers(
       root,

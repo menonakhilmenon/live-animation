@@ -1,5 +1,6 @@
 import { MotionClip } from './animation/clip';
 import { VisemeEvent } from './animation/face';
+import { GestureSchedule } from './animation/schedule';
 import { AudioEngine } from './audio/engine';
 
 /** Where the Python animation sidecar listens (ml/server.py). */
@@ -7,6 +8,9 @@ const SIDECAR = 'http://127.0.0.1:8600';
 
 export interface UIHooks {
   playClip: (clip: MotionClip) => void;
+  /** Preferred playback: prebaked library clips per the sidecar's schedule.
+   * Returns false when the library can't serve it (caller falls back). */
+  playSchedule: (schedule: GestureSchedule, clock: () => number) => boolean;
   /** Install (or clear) a phoneme-timed lip-sync track. */
   setVisemes: (events: VisemeEvent[] | null, clock?: () => number) => void;
 }
@@ -70,8 +74,9 @@ export function setupUI(engine: AudioEngine, hooks: UIHooks): void {
         }),
       });
       if (!res.ok) throw new Error(`sidecar ${res.status}: ${await res.text()}`);
-      const { clip, audioB64, visemes } = (await res.json()) as {
-        clip: MotionClip;
+      const { clip, schedule, audioB64, visemes } = (await res.json()) as {
+        clip?: MotionClip;
+        schedule?: GestureSchedule;
         audioB64: string;
         visemes?: VisemeEvent[];
       };
@@ -85,7 +90,17 @@ export function setupUI(engine: AudioEngine, hooks: UIHooks): void {
       // Start the gesture clip the moment audio actually starts so lip
       // sync (audio-driven) and body motion (clip-driven) stay aligned.
       hooks.setVisemes(visemes ?? null, () => audioEl.currentTime);
-      audioEl.addEventListener('playing', () => hooks.playClip(clip), { once: true });
+      audioEl.addEventListener(
+        'playing',
+        () => {
+          // Prebaked schedule is the artifact-free path; raw model clip is
+          // the fallback for older servers / missing library entries.
+          const scheduled =
+            !!schedule?.base?.length && hooks.playSchedule(schedule, () => audioEl.currentTime);
+          if (!scheduled && clip) hooks.playClip(clip);
+        },
+        { once: true },
+      );
       await audioEl.play();
       speakStatus.textContent = `speaking (${speakEmotion.value})`;
     } catch (err) {

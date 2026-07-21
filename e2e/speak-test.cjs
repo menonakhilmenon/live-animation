@@ -51,11 +51,17 @@ function sidecarUp() {
   await page.selectOption('#speak-emotion', 'excited');
   await page.click('#btn-speak');
 
-  // Generation takes a few seconds; the clip starts when audio plays.
-  await page.waitForFunction(() => window.__app.animator.clipPlayer.active, null, {
-    timeout: 60000,
-  });
-  console.log('clip playing');
+  // Generation takes a few seconds; playback starts when audio plays.
+  await page.waitForFunction(
+    () => window.__app.animator.schedulePlayer.active || window.__app.animator.clipPlayer.active,
+    null,
+    { timeout: 60000 },
+  );
+  const mode = await page.evaluate(() =>
+    window.__app.animator.schedulePlayer.active ? 'schedule' : 'raw-clip',
+  );
+  console.log('playing via:', mode);
+  check('prebaked schedule mode active', mode === 'schedule');
 
   const sample = () =>
     page.evaluate(() => {
@@ -73,12 +79,15 @@ function sidecarUp() {
   let handTravel = 0;
   let maxMouth = 0;
   let maxMood = -Infinity;
+  let maxJump = 0;
   let audioAdvanced = false;
   let prev = null;
   for (let i = 0; i < 32; i++) {
     const p = await sample();
     if (prev) {
-      handTravel += Math.hypot(...p.rh.map((v, k) => v - prev.rh[k]));
+      const jump = Math.hypot(...p.rh.map((v, k) => v - prev.rh[k]));
+      maxJump = Math.max(maxJump, jump);
+      handTravel += jump;
       handTravel += Math.hypot(...p.lh.map((v, k) => v - prev.lh[k]));
       if (p.t > prev.t) audioAdvanced = true;
     }
@@ -93,6 +102,8 @@ function sidecarUp() {
   const hasTrack = await page.evaluate(() => !!window.__app.animator.faceAnimator?.hasVisemeTrack);
   check('phoneme viseme track installed', hasTrack);
   check('hands gesture during speech', handTravel > 0.4, `travel=${handTravel.toFixed(2)}m`);
+  // Artifact guard: hand may not teleport between 125 ms samples.
+  check('motion is continuous (no pose pops)', maxJump < 0.3, `maxJump=${maxJump.toFixed(3)}m`);
   check('lip sync moves the mouth', maxMouth > 0.1, `maxMouth=${maxMouth.toFixed(2)}`);
   check('excited mood reaches the face', maxMood > 0.4, `maxMood=${maxMood.toFixed(2)}`);
   check('zero console errors', consoleErrors.length === 0, consoleErrors.join(' | '));

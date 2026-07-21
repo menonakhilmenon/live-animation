@@ -137,7 +137,19 @@ Decisions and reasons:
    fallback for plain audio/mic.
 7. ~~Emotion intensity~~ — neutral↔emotion embedding interpolation at
    inference (scratch row), slider in the Speak panel.
-8. Facial channel: EMAGE's FLAME face output → VRM expressions mapping
+8. ~~Prebaked + additive architecture~~ (user-directed rework) — raw model
+   poses no longer reach the skeleton. Three layers:
+   **library** (`public/anims/*.json` baked by `ml/bake_library.py`:
+   smoothed, loopified EMAGE generations per emotion + Xbot's embedded
+   idle/agree/headShake converted at load by `src/animation/library.ts`),
+   **scheduler** (`build_schedule` in the sidecar decides which clip plays
+   when: talk loops over speech spans, idle in gaps, additive nod/headshake
+   accents on punctuation/negation — the "model decides" hook, swappable
+   for a learned scheduler), and **SchedulePlayer**
+   (`src/animation/schedule.ts`: looping base with segment crossfades,
+   world-space additive accents, ease in/out, procedural breathing/nods on
+   top). Raw clips remain a debug fallback (`raw: true`).
+9. Facial channel: EMAGE's FLAME face output → VRM expressions mapping
    (would need a FLAME→VRM blendshape basis; TTS visemes cover the mouth).
 9. Longer/full-model training when the GPU is free (embeddings run fit in
    ~1.2 GiB because resident LLM/TTS services hold the rest); more

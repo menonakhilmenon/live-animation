@@ -217,6 +217,62 @@ def gestures(
     return poses_to_clip(poses, trans, cfg.pose_fps, pin_feet=True)
 
 
+# UI emotion -> baked base-loop name (ml/bake_library.py).
+BASE_LOOP = {
+    "neutral": "talk_neutral", "calm": "talk_neutral",
+    "happy": "talk_happiness", "excited": "talk_happiness",
+    "angry": "talk_anger", "sad": "talk_sadness",
+}
+NEGATIVE_WORDS = {"no", "not", "never", "nothing", "wrong", "unacceptable", "worst", "bad"}
+
+
+def build_schedule(words, duration, emotion, intensity):
+    """Decide which prebaked clip plays when: talk loops over speech spans,
+    idle over long gaps, additive accents on punctuation/negation. This is
+    the 'model decides' hook — currently prosody+emotion rules over the
+    trained emotion styles; a learned scheduler can replace it in place."""
+    base_name = BASE_LOOP.get(emotion, "talk_neutral")
+    segs, accents = [], []
+    if not words:
+        segs.append({"name": base_name, "t0": 0.0, "t1": round(duration, 2)})
+        return {"base": segs, "accents": accents}
+
+    # Speech spans: words separated by <0.9 s belong to one span.
+    spans = []
+    cur = [words[0][1], words[0][2]]
+    for _, t0, t1 in words[1:]:
+        if t0 - cur[1] > 0.9:
+            spans.append(cur)
+            cur = [t0, t1]
+        else:
+            cur[1] = t1
+    spans.append(cur)
+
+    cursor = 0.0
+    for s0, s1 in spans:
+        if s0 - cursor > 1.2:
+            segs.append({"name": "idle_calm", "t0": round(cursor, 2), "t1": round(s0 - 0.15, 2)})
+            cursor = s0 - 0.15
+        segs.append({"name": base_name, "t0": round(cursor, 2), "t1": round(s1 + 0.25, 2)})
+        cursor = s1 + 0.25
+    segs[-1]["t1"] = round(max(segs[-1]["t1"], duration), 2)
+
+    # Accents: nod at sentence ends (alternating), headshake on negation
+    # for the tense emotions. Deterministic given the text.
+    flip = True
+    for w, t0, t1 in words:
+        token = w.strip().lower()
+        if w.strip() in {".", "!", "?"} or token.endswith((".", "!", "?")):
+            if flip:
+                accents.append({"name": "agree", "t": round(max(0.0, t0 - 0.15), 2),
+                                "scale": round(0.5 + 0.5 * intensity, 2)})
+            flip = not flip
+        elif token.strip('.,!?') in NEGATIVE_WORDS and emotion in ("angry", "sad"):
+            accents.append({"name": "headShake", "t": round(max(0.0, t0 - 0.1), 2),
+                            "scale": round(0.4 + 0.6 * intensity, 2)})
+    return {"base": segs, "accents": accents}
+
+
 def wav_b64(audio: np.ndarray, sr: int) -> str:
     import soundfile as sf
 
@@ -241,6 +297,7 @@ def create_app():
         emotion: str = "neutral"
         voice: str = "af_heart"
         intensity: float = 1.0  # 0 = neutral gestures, 1 = full emotion
+        raw: bool = False  # also return the raw EMAGE clip (debug/fallback)
 
     @app.get("/health")
     def health():
@@ -267,10 +324,11 @@ def create_app():
             raise HTTPException(400, "need text or audioB64")
 
         s = max(0.0, min(1.0, req.intensity))
-        clip = gestures(audio, sr, 1.0 + (amplitude - 1.0) * s, emotion_id, s)
-        clip["mood"] = mood * s
-        return {
-            "clip": clip,
+        duration = len(audio) / sr
+        schedule = build_schedule(words, duration, req.emotion, s)
+        schedule["mood"] = mood * s
+        out = {
+            "schedule": schedule,
             "audioB64": wav_b64(audio, sr),
             "words": words,
             "visemes": visemes,
@@ -278,6 +336,11 @@ def create_app():
             "mood": mood * s,
             "intensity": s,
         }
+        if req.raw:
+            clip = gestures(audio, sr, 1.0 + (amplitude - 1.0) * s, emotion_id, s)
+            clip["mood"] = mood * s
+            out["clip"] = clip
+        return out
 
     return app
 

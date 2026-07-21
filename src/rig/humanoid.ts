@@ -69,6 +69,9 @@ export interface HumanoidRig {
    * hands instead of the procedural curl.
    */
   fingerRetarget?: Record<string, { node: THREE.Object3D; tposeWorld: THREE.Quaternion }>;
+  /** Animation clips that shipped inside the model file (GLB), if any —
+   * raw material for the prebaked-animation library. */
+  sourceAnimations?: THREE.AnimationClip[];
   /** Facial expression driver, when the model has one (VRM). */
   face?: FaceDriver;
   /**

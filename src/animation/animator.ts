@@ -3,6 +3,7 @@ import { AudioFeatures } from '../audio/features';
 import { HumanoidRig, resetToRest } from '../rig/humanoid';
 import { ClipPlayer, MotionClip } from './clip';
 import { FaceAnimator } from './face';
+import { GestureSchedule, SchedulePlayer } from './schedule';
 import { pinEffector, setWorldQuaternion } from './ik';
 import { Spring } from './spring';
 
@@ -91,6 +92,10 @@ export class Animator {
   /** Generated-motion playback; overrides procedural layers while active. */
   readonly clipPlayer = new ClipPlayer();
 
+  /** Prebaked-library playback driven by a gesture schedule (preferred —
+   * base loops + additive accents; raw poses never reach the skeleton). */
+  readonly schedulePlayer = new SchedulePlayer();
+
   constructor(private rig: HumanoidRig) {
     this.faceAnimator = rig.face ? new FaceAnimator(rig.face) : null;
   }
@@ -99,9 +104,32 @@ export class Animator {
     this.clipPlayer.play(clip);
   }
 
+  playSchedule(schedule: GestureSchedule, clock: () => number): boolean {
+    const ok = this.schedulePlayer.play(schedule, clock);
+    if (ok) this.clipPlayer.stop();
+    return ok;
+  }
+
   update(f: AudioFeatures, dt: number): void {
     dt = Math.min(dt, 1 / 20); // avoid spring blow-ups on tab-switch stalls
     this.t += dt;
+
+    // Scheduled prebaked playback: base library pose + additive accents,
+    // then a light procedural pass (breathing, onset nods) for life.
+    if (this.schedulePlayer.active) {
+      resetToRest(this.rig);
+      this.ensureFootAnchors();
+      if (this.faceAnimator) this.faceAnimator.moodBias = this.schedulePlayer.mood;
+      const w = this.schedulePlayer.apply(this.rig, dt);
+      const j = this.rig.joints;
+      const breath = Math.sin(this.t * 1.9) * 0.015;
+      j.chest.rotation.x += breath;
+      const nod = this.headNod.update(Math.min(1, f.onset * 0.6), dt);
+      j.head.rotation.x += nod * 0.08 * w;
+      j.neck.rotation.y += Math.sin(this.t * 0.23) * 0.03;
+      this.finishFrame(f, dt, true);
+      return;
+    }
 
     // An active motion clip is the pose source; procedural layers stand
     // down but face/lip-sync, fingers, and (per-clip) foot IK still run.
@@ -335,7 +363,8 @@ export class Animator {
       }
     }
     // Procedural curl stands down when an active clip animates the fingers.
-    const clipOwnsFingers = this.clipPlayer.active && this.clipPlayer.hasFingers;
+    const clipOwnsFingers =
+      (this.clipPlayer.active && this.clipPlayer.hasFingers) || this.schedulePlayer.active;
     if (this.rig.fingers && !clipOwnsFingers) {
       for (const s of ['left', 'right'] as const) {
         const c = this.curl[s].update(this.curlTarget[s], dt);
