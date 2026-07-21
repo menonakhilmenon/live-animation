@@ -55,6 +55,13 @@ export interface HumanoidRig {
   positionScale: number;
   /** Probed arm rotation axes (see src/rig/axes.ts). */
   armAxes: { left: ArmAxes; right: ArmAxes };
+  /**
+   * World-space orientation of each joint when the character stands in a
+   * canonical T-pose (Y-up, facing +Z, arms along ±X). Motion clips store
+   * world-space rotation deltas from this pose, so playback works on any
+   * skeleton regardless of its local bone frames (see animation/clip.ts).
+   */
+  tposeWorld: Record<JointName, THREE.Quaternion>;
   /** Facial expression driver, when the model has one (VRM). */
   face?: FaceDriver;
   /**
@@ -240,7 +247,20 @@ export function createHumanoid(): HumanoidRig {
     };
   }
 
-  return { root, joints, rest, positionScale: 1, armAxes: probeArmAxes({ root, joints }) };
+  // The capsule is authored arms-down with identity world rotations, so its
+  // T-pose reference is identity everywhere except the arm chains, which in
+  // a T-pose would roll their hanging -Y limb axis out to ±X.
+  const tposeWorld = {} as Record<JointName, THREE.Quaternion>;
+  const zAxis = new THREE.Vector3(0, 0, 1);
+  for (const key of Object.keys(joints) as JointName[]) {
+    tposeWorld[key] = new THREE.Quaternion();
+  }
+  for (const j of ['UpperArm', 'LowerArm', 'Hand'] as const) {
+    tposeWorld[`left${j}`].setFromAxisAngle(zAxis, Math.PI / 2);
+    tposeWorld[`right${j}`].setFromAxisAngle(zAxis, -Math.PI / 2);
+  }
+
+  return { root, joints, rest, positionScale: 1, armAxes: probeArmAxes({ root, joints }), tposeWorld };
 }
 
 /** Reset every joint to its captured rest pose (call before applying layers). */

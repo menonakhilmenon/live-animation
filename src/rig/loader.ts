@@ -103,6 +103,15 @@ export async function loadGLBRig(url: string): Promise<HumanoidRig> {
  */
 export function finalizeRig(root: THREE.Group, joints: Record<JointName, THREE.Object3D>): HumanoidRig {
   root.updateMatrixWorld(true);
+
+  // Loaded models arrive in T-pose (Mixamo authored, VRM normalized bones);
+  // capture each joint's world orientation NOW, before the arms-down
+  // calibration, as the canonical reference frame for motion-clip retargeting.
+  const tposeWorld = {} as Record<JointName, THREE.Quaternion>;
+  for (const key of Object.keys(joints) as JointName[]) {
+    tposeWorld[key] = joints[key].getWorldQuaternion(new THREE.Quaternion());
+  }
+
   calibrateArmsDown(root, joints);
 
   // Positional offsets from the animator are in meters (world space); convert
@@ -123,7 +132,7 @@ export function finalizeRig(root: THREE.Group, joints: Record<JointName, THREE.O
     };
   }
 
-  return { root, joints, rest, positionScale, armAxes };
+  return { root, joints, rest, positionScale, armAxes, tposeWorld };
 }
 
 /**

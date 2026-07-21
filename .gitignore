@@ -1,5 +1,8 @@
 node_modules/
 dist/
+ml/.venv/
+ml/checkpoints/
+ml/data/
 e2e/.artifacts/
 public/models/
 *.local

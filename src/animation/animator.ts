@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { AudioFeatures } from '../audio/features';
 import { HumanoidRig, resetToRest } from '../rig/humanoid';
+import { ClipPlayer, MotionClip } from './clip';
 import { FaceAnimator } from './face';
 import { pinEffector, setWorldQuaternion } from './ik';
 import { Spring } from './spring';
@@ -87,13 +88,30 @@ export class Animator {
 
   readonly faceAnimator: FaceAnimator | null;
 
+  /** Generated-motion playback; overrides procedural layers while active. */
+  readonly clipPlayer = new ClipPlayer();
+
   constructor(private rig: HumanoidRig) {
     this.faceAnimator = rig.face ? new FaceAnimator(rig.face) : null;
+  }
+
+  playClip(clip: MotionClip): void {
+    this.clipPlayer.play(clip);
   }
 
   update(f: AudioFeatures, dt: number): void {
     dt = Math.min(dt, 1 / 20); // avoid spring blow-ups on tab-switch stalls
     this.t += dt;
+
+    // An active motion clip is the pose source; procedural layers stand
+    // down but face/lip-sync, fingers, and (per-clip) foot IK still run.
+    if (this.clipPlayer.active) {
+      resetToRest(this.rig);
+      this.ensureFootAnchors();
+      const pin = this.clipPlayer.apply(this.rig, dt);
+      this.finishFrame(f, dt, pin);
+      return;
+    }
 
     // Sustained intensity (slow spring) gates most layers so the character
     // relaxes to idle in silence and commits to the groove on loud sections.
@@ -184,16 +202,7 @@ export class Animator {
     resetToRest(r);
     const j = r.joints;
 
-    if (!this.footAnchors) {
-      r.root.updateWorldMatrix(true, true);
-      this.footAnchors = (['left', 'right'] as const).map((s) => {
-        const pos = new THREE.Vector3();
-        const quat = new THREE.Quaternion();
-        j[`${s}Foot`].getWorldPosition(pos);
-        j[`${s}Foot`].getWorldQuaternion(quat);
-        return { pos, quat };
-      });
-    }
+    this.ensureFootAnchors();
     // Positional offsets below are authored in meters; ps converts them to
     // the rig's local units (see HumanoidRig.positionScale).
     const ps = r.positionScale;
@@ -299,13 +308,29 @@ export class Animator {
     this.finishFrame(f, dt);
   }
 
-  /** Foot IK + fingers + face + model runtime update — all behaviors. */
-  private finishFrame(f: AudioFeatures, dt: number): void {
+  /** Capture the feet's world rest transforms as ground-contact IK targets. */
+  private ensureFootAnchors(): void {
+    if (this.footAnchors) return;
     const j = this.rig.joints;
-    for (const [i, s] of (['left', 'right'] as const).entries()) {
-      const anchor = this.footAnchors![i];
-      pinEffector([j[`${s}LowerLeg`], j[`${s}UpperLeg`]], j[`${s}Foot`], anchor.pos);
-      setWorldQuaternion(j[`${s}Foot`], anchor.quat);
+    this.rig.root.updateWorldMatrix(true, true);
+    this.footAnchors = (['left', 'right'] as const).map((s) => {
+      const pos = new THREE.Vector3();
+      const quat = new THREE.Quaternion();
+      j[`${s}Foot`].getWorldPosition(pos);
+      j[`${s}Foot`].getWorldQuaternion(quat);
+      return { pos, quat };
+    });
+  }
+
+  /** Foot IK + fingers + face + model runtime update — all behaviors. */
+  private finishFrame(f: AudioFeatures, dt: number, pinFeet = true): void {
+    const j = this.rig.joints;
+    if (pinFeet) {
+      for (const [i, s] of (['left', 'right'] as const).entries()) {
+        const anchor = this.footAnchors![i];
+        pinEffector([j[`${s}LowerLeg`], j[`${s}UpperLeg`]], j[`${s}Foot`], anchor.pos);
+        setWorldQuaternion(j[`${s}Foot`], anchor.quat);
+      }
     }
     if (this.rig.fingers) {
       for (const s of ['left', 'right'] as const) {

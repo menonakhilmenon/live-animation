@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { AudioEngine } from './audio/engine';
 import { Animator } from './animation/animator';
+import { MotionClip } from './animation/clip';
 import { createHumanoid } from './rig/humanoid';
 import { loadGLBRig } from './rig/loader';
 import { loadVRMRig } from './rig/vrm';
@@ -86,6 +87,7 @@ const setActiveRig = (idx: number) => {
       audio,
       animator,
       rigCount: rigs.length,
+      playClip: (clip: MotionClip) => animator.playClip(clip),
     };
   }
 };

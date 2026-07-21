@@ -28,6 +28,7 @@ flatpak run com.brave.Browser --headless=new --remote-debugging-port=9222 \
   --no-first-run --no-default-browser-check --disable-gpu \
   --autoplay-policy=no-user-gesture-required \
   --use-fake-ui-for-media-stream --use-fake-device-for-media-stream \
+  --disable-audio-output \
   about:blank >/tmp/brave.log 2>&1 &
 timeout 40 bash -c 'until curl -sf http://localhost:9222/json/version >/dev/null; do sleep 1; done'
 ```
@@ -76,3 +77,10 @@ npx esbuild src/audio/analysis.ts --bundle --format=cjs --platform=node \
 - Bone frames differ per rig format (Mixamo Y-along-bone; VRM0 normalized
   bones sit under a 180° parent rotation) — never hardcode rotation axes;
   probe them like `src/rig/axes.ts` / `calibrateArmsDown` do.
+- If EVERY audio assertion fails at once (playback stalls, mic silent) but
+  offline analysis still classifies files, the browser's audio clock is
+  frozen because no audio server is reachable from the flatpak (e.g. the
+  desktop session is locked/away). `--disable-audio-output` (in the launch
+  line above) renders the Web Audio graph to a null sink and fixes it —
+  check with `ctx.currentTime` advancing, not `ctx.state === 'running'`
+  (the state lies).
