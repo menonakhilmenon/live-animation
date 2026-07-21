@@ -122,7 +122,7 @@ Everything needed to build and run the **reactive** app is committed. The
 
 | Artifact | Where | Status | If lost |
 |---|---|---|---|
-| Emotion model `emage_emotion` (~531 MB) | `ml/checkpoints/` (gitignored) | **Local only** | Retrain: `ml/train_emotion.py` (hours). Sidecar auto-falls back to base EMAGE if absent. |
+| Emotion model `emage_emotion` (~531 MB) | `ml/checkpoints/` (gitignored) | **Local + backed up** | Backup archive (verified, checksummed) at `/var/mnt/hdd/backups/live-animation/emage_emotion_v2_*.tar.gz` on a separate physical disk (`/dev/sda2`). Restore: `tar xzf <archive> -C ml/checkpoints/`. Or retrain via `ml/train_emotion.py` (hours). Sidecar auto-falls back to base EMAGE if absent. |
 | Baked base/overlay clips | `public/anims/*.json` | **Committed** | Rebuild via `ml/bake_library.py` (mocap) or the game pipeline. |
 | Learned accent model | `ml/checkpoints/scheduler/` | **Committed** (small) | — |
 | Seed pose | `ml/seed_pose.npy` | **Committed** | — |
