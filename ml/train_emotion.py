@@ -303,7 +303,10 @@ def main():
                 model.save_pretrained(OUT)
                 with torch.no_grad():
                     model.eval()
-                    vl = [losses(b, it) for _, b in zip(range(24), val_loader)]
+                    # Fixed-difficulty eval: the training mask ratio ramps
+                    # with `it`, which would make val numbers incomparable
+                    # across checkpoints — pin it to mid-curriculum.
+                    vl = [losses(b, args.steps // 2) for _, b in zip(range(24), val_loader)]
                     model.train()
                 val = float(np.mean(vl))
                 if val < best_val:

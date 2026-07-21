@@ -8,3 +8,7 @@ public/models/
 *.local
 .DS_Store
 ml/vendor/
+!ml/checkpoints/
+ml/checkpoints/*
+!ml/checkpoints/scheduler/
+__pycache__/
