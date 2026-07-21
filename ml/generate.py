@@ -55,6 +55,29 @@ def sample_tokens(logits, temperature: float = 0.0, top_p: float = 0.9, generato
     return si.reshape(-1, si.shape[-1]).gather(1, choice).reshape(logits.shape[:-1])
 
 
+SEED_POSE_PATH = os.path.join(os.path.dirname(__file__), "seed_pose.npy")
+
+
+def build_seed(device, frames: int = 4):
+    """Seed-pose conditioning: (masked_motion, mask) holding a natural
+    bent-elbow talking pose (extracted from BEAT2 mocap) in the first
+    `frames` frames. EMAGE's autoregressive windows carry the seed forward,
+    anchoring posture — unseeded inference rests arms ~30 deg lower than
+    real speakers. Returns (None, None) when no seed file exists."""
+    if not os.path.exists(SEED_POSE_PATH):
+        return None, None
+    import torch
+
+    from emage_utils.rotation_conversions import axis_angle_to_rotation_6d
+
+    pose = torch.from_numpy(np.load(SEED_POSE_PATH)).float().reshape(1, 1, 55, 3)
+    six = axis_angle_to_rotation_6d(pose).reshape(1, 1, -1)  # (1,1,330)
+    row = torch.cat([six, torch.zeros(1, 1, 3), torch.ones(1, 1, 4)], dim=-1)
+    masked_motion = row.repeat(1, frames, 1).to(device)
+    mask = torch.zeros_like(masked_motion)  # 0 = provided, not to generate
+    return masked_motion, mask
+
+
 def axis_angle_to_quat(aa: np.ndarray) -> np.ndarray:
     """(..., 3) axis-angle -> (..., 4) quaternion [x, y, z, w]."""
     angle = np.linalg.norm(aa, axis=-1, keepdims=True)
@@ -184,8 +207,9 @@ def main() -> None:
 
     print(f"generating gestures for {len(audio) / model.cfg.audio_sr:.1f}s of audio ...", flush=True)
     gen = torch.Generator(device="cpu").manual_seed(args.seed)
+    seed_motion, seed_mask = build_seed(device)
     with torch.no_grad():
-        lat = model.inference(audio_t, speaker, motion_vq, masked_motion=None, mask=None)
+        lat = model.inference(audio_t, speaker, motion_vq, masked_motion=seed_motion, mask=seed_mask)
         cfg = model.cfg
         pick = lambda cls_key, rec_key, c, l, temp=0.0: (  # noqa: E731
             sample_tokens(lat[cls_key].cpu(), temp, generator=gen).to(device) if c > 0 else None,

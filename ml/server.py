@@ -186,14 +186,15 @@ def gestures(
                 w.data[scratch] = (1 - intensity) * w.data[0] + intensity * w.data[emotion_id]
         sid = scratch
     speaker = torch.full((1, 1), sid).long().to(device)
-    from generate import sample_tokens
+    from generate import build_seed, sample_tokens
 
     # Deterministic per input; T=0.9 on upper/hands restores real-motion
     # dynamics (argmax measures 5x slower hands than mocap); legs and face
     # keep argmax for stability.
     gen = torch.Generator(device="cpu").manual_seed(int(np.abs(audio[:800]).sum() * 1e6) % 2**31)
+    seed_motion, seed_mask = build_seed(device)
     with torch.no_grad():
-        lat = model.inference(audio_t, speaker, motion_vq, masked_motion=None, mask=None)
+        lat = model.inference(audio_t, speaker, motion_vq, masked_motion=seed_motion, mask=seed_mask)
         cfg = model.cfg
         pick = lambda ck, rk, c, l, temp=0.0: (  # noqa: E731
             sample_tokens(lat[ck].cpu(), temp, generator=gen).to(device) if c > 0 else None,

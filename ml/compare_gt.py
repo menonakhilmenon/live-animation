@@ -52,6 +52,7 @@ def main():
     ap.add_argument("--out", default=os.path.join(ROOT, "..", "e2e", ".artifacts", "compare"))
     ap.add_argument("--temperature", type=float, default=0.0, help="VQ sampling temperature (0 = argmax)")
     ap.add_argument("--seed", type=int, default=7)
+    ap.add_argument("--no-seed-pose", action="store_true")
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
 
@@ -94,11 +95,12 @@ def main():
     audio_t = torch.from_numpy(audio_win).to(device).unsqueeze(0)
     sid = emo if model.cfg.speaker_dims >= 8 else 0
     speaker = torch.full((1, 1), sid).long().to(device)
-    from generate import sample_tokens
+    from generate import build_seed, sample_tokens
 
     gen = torch.Generator(device="cpu").manual_seed(args.seed)
+    seed_motion, seed_mask = (None, None) if args.no_seed_pose else build_seed(device)
     with torch.no_grad():
-        lat = model.inference(audio_t, speaker, motion_vq, masked_motion=None, mask=None)
+        lat = model.inference(audio_t, speaker, motion_vq, masked_motion=seed_motion, mask=seed_mask)
         cfg = model.cfg
         pick = lambda ck, rk, c, l: (  # noqa: E731
             sample_tokens(lat[ck].cpu(), args.temperature, generator=gen).to(device) if c > 0 else None,
