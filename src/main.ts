@@ -3,7 +3,12 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { AudioEngine } from './audio/engine';
 import { Animator } from './animation/animator';
 import { MotionClip } from './animation/clip';
-import { convertGLTFAnimations, loadClipJSON } from './animation/library';
+import {
+  convertGLTFAnimations,
+  convertNamedSkeletonAnimations,
+  FFXV_BONES,
+  loadClipJSON,
+} from './animation/library';
 import { createHumanoid } from './rig/humanoid';
 import { loadGLBRig } from './rig/loader';
 import { loadVRMRig } from './rig/vrm';
@@ -107,6 +112,15 @@ const setActiveRig = (idx: number) => {
       animator,
       rigCount: rigs.length,
       playClip: (clip: MotionClip) => animator.playClip(clip),
+      // Dev utility: load an FBX (e.g. extracted game animation) for
+      // inspection/conversion via the browser console or e2e scripts.
+      loadFBX: (url: string) =>
+        import('three/examples/jsm/loaders/FBXLoader.js').then((m) =>
+          new m.FBXLoader().loadAsync(url),
+        ),
+      convertNamedSkeletonAnimations,
+      FFXV_BONES,
+      THREE,
     };
   }
 };
