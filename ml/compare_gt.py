@@ -113,10 +113,11 @@ def main():
             sample_tokens(lat[ck].cpu(), temp, generator=gen).to(device) if c > 0 else None,
             lat[rk] if l > 0 and c == 0 else None,
         )
-        fi, fl = pick("cls_face", "rec_face", cfg.cf, cfg.lf, args.temperature)
+        # Production policy (ml/server.py): face and lower body stay argmax.
+        fi, fl = pick("cls_face", "rec_face", cfg.cf, cfg.lf, 0.0)
         ui, ul = pick("cls_upper", "rec_upper", cfg.cu, cfg.lu, args.temperature)
         hi, hl = pick("cls_hands", "rec_hands", cfg.ch, cfg.lh, hands_t)
-        li, ll = pick("cls_lower", "rec_lower", cfg.cl, cfg.ll, args.temperature)
+        li, ll = pick("cls_lower", "rec_lower", cfg.cl, cfg.ll, 0.0)
         pred = motion_vq.decode(
             face_latent=fl, upper_latent=ul, lower_latent=ll, hands_latent=hl,
             face_index=fi, upper_index=ui, lower_index=li, hands_index=hi,
