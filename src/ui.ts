@@ -1,11 +1,18 @@
 import { MotionClip } from './animation/clip';
+import { VisemeEvent } from './animation/face';
 import { AudioEngine } from './audio/engine';
 
 /** Where the Python animation sidecar listens (ml/server.py). */
 const SIDECAR = 'http://127.0.0.1:8600';
 
+export interface UIHooks {
+  playClip: (clip: MotionClip) => void;
+  /** Install (or clear) a phoneme-timed lip-sync track. */
+  setVisemes: (events: VisemeEvent[] | null, clock?: () => number) => void;
+}
+
 /** Wires the control panel: audio file loading, mic toggle, feature meters. */
-export function setupUI(engine: AudioEngine, playClip: (clip: MotionClip) => void): void {
+export function setupUI(engine: AudioEngine, hooks: UIHooks): void {
   const fileBtn = document.getElementById('btn-file') as HTMLButtonElement;
   const micBtn = document.getElementById('btn-mic') as HTMLButtonElement;
   const fileInput = document.getElementById('file-input') as HTMLInputElement;
@@ -18,6 +25,7 @@ export function setupUI(engine: AudioEngine, playClip: (clip: MotionClip) => voi
   fileInput.addEventListener('change', async () => {
     const file = fileInput.files?.[0];
     if (!file) return;
+    hooks.setVisemes(null);
     audioEl.src = URL.createObjectURL(file);
     audioEl.hidden = false;
     await engine.useMediaElement(audioEl);
@@ -62,7 +70,11 @@ export function setupUI(engine: AudioEngine, playClip: (clip: MotionClip) => voi
         }),
       });
       if (!res.ok) throw new Error(`sidecar ${res.status}: ${await res.text()}`);
-      const { clip, audioB64 } = (await res.json()) as { clip: MotionClip; audioB64: string };
+      const { clip, audioB64, visemes } = (await res.json()) as {
+        clip: MotionClip;
+        audioB64: string;
+        visemes?: VisemeEvent[];
+      };
 
       const bytes = Uint8Array.from(atob(audioB64), (c) => c.charCodeAt(0));
       const file = new File([bytes], 'speech.wav', { type: 'audio/wav' });
@@ -72,7 +84,8 @@ export function setupUI(engine: AudioEngine, playClip: (clip: MotionClip) => voi
       engine.analyzeFile(file, audioEl).catch(() => {});
       // Start the gesture clip the moment audio actually starts so lip
       // sync (audio-driven) and body motion (clip-driven) stay aligned.
-      audioEl.addEventListener('playing', () => playClip(clip), { once: true });
+      hooks.setVisemes(visemes ?? null, () => audioEl.currentTime);
+      audioEl.addEventListener('playing', () => hooks.playClip(clip), { once: true });
       await audioEl.play();
       speakStatus.textContent = `speaking (${speakEmotion.value})`;
     } catch (err) {
@@ -85,6 +98,7 @@ export function setupUI(engine: AudioEngine, playClip: (clip: MotionClip) => voi
 
   micBtn.addEventListener('click', async () => {
     try {
+      hooks.setVisemes(null);
       audioEl.pause();
       await engine.useMicrophone();
       micBtn.classList.add('active');

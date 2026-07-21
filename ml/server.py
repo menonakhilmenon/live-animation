@@ -104,19 +104,62 @@ def get_models():
     return _models
 
 
+# Misaki/IPA phoneme characters -> viseme class. 'aa' wide-open, 'ih'
+# spread, 'ou' rounded; bilabials close the mouth; other consonants get a
+# small neutral opening (weight handles that).
+VISEME_OF = {}
+for ch in "aæɑʌAIW":
+    VISEME_OF[ch] = "aa"
+for ch in "iɪeɛjY":
+    VISEME_OF[ch] = "ih"
+for ch in "oɔuʊOQw":
+    VISEME_OF[ch] = "ou"
+for ch in "pbm":
+    VISEME_OF[ch] = "sil"
+
+
+def viseme_track(tokens):
+    """[(text, phonemes, t0, t1)] -> [[t0, t1, viseme, weight], ...]"""
+    events = []
+    for text, phonemes, t0, t1 in tokens:
+        ph = [c for c in (phonemes or "") if c.isalpha() or c in VISEME_OF]
+        if not ph or t1 <= t0:
+            continue
+        step = (t1 - t0) / len(ph)
+        for i, c in enumerate(ph):
+            v = VISEME_OF.get(c)
+            w = 1.0
+            if v is None:
+                v, w = "ih", 0.3  # generic consonant: slightly open
+            elif v == "sil":
+                w = 0.0
+            events.append([round(t0 + i * step, 3), round(t0 + (i + 1) * step, 3), v, w])
+    # Merge consecutive identical visemes to keep the payload small.
+    merged = []
+    for e in events:
+        if merged and merged[-1][2] == e[2] and merged[-1][3] == e[3] and abs(merged[-1][1] - e[0]) < 0.02:
+            merged[-1][1] = e[1]
+        else:
+            merged.append(e)
+    return merged
+
+
 def tts(text: str, voice: str, speed: float):
-    """text -> (mono float32 24 kHz, [[word, t0, t1], ...])"""
+    """text -> (mono float32 24 kHz, [[word, t0, t1], ...], viseme track)"""
     m = get_models()
-    chunks, words, offset = [], [], 0.0
+    chunks, words, tokens, offset = [], [], [], 0.0
     for res in m["tts"](text, voice=voice, speed=speed):
         if res.tokens:
             for t in res.tokens:
                 if t.start_ts is not None:
                     words.append([t.text, round(offset + t.start_ts, 3), round(offset + t.end_ts, 3)])
+                    tokens.append(
+                        (t.text, getattr(t, "phonemes", ""), offset + t.start_ts, offset + t.end_ts)
+                    )
         audio = res.audio.numpy()
         chunks.append(audio)
         offset += len(audio) / 24000
-    return np.concatenate(chunks), words
+    return np.concatenate(chunks), words, viseme_track(tokens)
 
 
 def gestures(
@@ -208,8 +251,9 @@ def create_app():
         if req.emotion not in EMOTIONS:
             raise HTTPException(400, f"unknown emotion {req.emotion!r}; one of {list(EMOTIONS)}")
         amplitude, speed, mood, emotion_id = EMOTIONS[req.emotion]
+        visemes = []
         if req.text:
-            audio, words = tts(req.text, req.voice, speed)
+            audio, words, visemes = tts(req.text, req.voice, speed)
             sr = 24000
         elif req.audioB64:
             import librosa
@@ -229,6 +273,7 @@ def create_app():
             "clip": clip,
             "audioB64": wav_b64(audio, sr),
             "words": words,
+            "visemes": visemes,
             "emotion": req.emotion,
             "mood": mood * s,
             "intensity": s,

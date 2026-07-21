@@ -90,6 +90,8 @@ function sidecarUp() {
   }
 
   check('audio plays', audioAdvanced);
+  const hasTrack = await page.evaluate(() => !!window.__app.animator.faceAnimator?.hasVisemeTrack);
+  check('phoneme viseme track installed', hasTrack);
   check('hands gesture during speech', handTravel > 0.4, `travel=${handTravel.toFixed(2)}m`);
   check('lip sync moves the mouth', maxMouth > 0.1, `maxMouth=${maxMouth.toFixed(2)}`);
   check('excited mood reaches the face', maxMood > 0.4, `maxMood=${maxMood.toFixed(2)}`);
