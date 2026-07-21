@@ -75,7 +75,16 @@ def poses_to_clip(poses: np.ndarray, trans: np.ndarray, fps: int, pin_feet: bool
     idxs = [i for i, name in sorted(SMPLX_TO_JOINT.items()) if name]
     rotations = world[:, idxs]  # (t, len(joints), 4)
 
-    hips = trans - trans[0:1]  # meters, offset from the clip's start
+    # Root translation: EMAGE integrates a predicted velocity, which wanders
+    # over long clips (~0.8 m over 8 s observed). High-pass X/Z against a
+    # slow EMA so short-term weight shifts survive but drift is removed;
+    # Y (weight bobs) is kept as the offset from the first frame.
+    hips = (trans - trans[0:1]).copy()
+    ema = hips[0, [0, 2]].copy()
+    alpha = 1.0 / (fps * 2.0)  # ~2 s time constant
+    for i in range(t):
+        ema += alpha * (hips[i, [0, 2]] - ema)
+        hips[i, [0, 2]] -= ema
     return {
         "fps": fps,
         "joints": joints,
