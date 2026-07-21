@@ -224,13 +224,81 @@ BASE_LOOP = {
     "angry": "talk_anger", "sad": "talk_sadness",
 }
 NEGATIVE_WORDS = {"no", "not", "never", "nothing", "wrong", "unacceptable", "worst", "bad"}
+ACCENT_CKPT = os.path.join(os.path.dirname(__file__), "checkpoints", "scheduler")
 
 
-def build_schedule(words, duration, emotion, intensity):
+def get_accent_model():
+    """Learned accent scheduler (ml/train_scheduler.py), lazily (re)loaded
+    so a server started before training finishes picks the weights up."""
+    if "accent" in _models:
+        return _models["accent"]
+    path = os.path.join(ACCENT_CKPT, "accent_model.pt")
+    meta_path = os.path.join(ACCENT_CKPT, "meta.json")
+    if not (os.path.exists(path) and os.path.exists(meta_path)):
+        return None
+    import json as _json
+
+    import torch
+    import torch.nn as nn
+
+    meta = _json.load(open(meta_path))
+    dims = meta["features"] * (2 * meta["ctx"] + 1)
+    model = nn.Sequential(
+        nn.Linear(dims, meta["hidden"][0]), nn.ReLU(),
+        nn.Linear(meta["hidden"][0], meta["hidden"][1]), nn.ReLU(),
+        nn.Linear(meta["hidden"][1], 2),
+    )
+    model.load_state_dict(torch.load(path, map_location="cpu"))
+    model.eval()
+    _models["accent"] = (model, np.array(meta["mean"], dtype=np.float32),
+                         np.array(meta["std"], dtype=np.float32), meta)
+    print(f"learned accent scheduler loaded (val F1 {meta.get('val_f1')})", flush=True)
+    return _models["accent"]
+
+
+def learned_accents(audio: np.ndarray, sr: int, intensity: float):
+    """Run the accent model over audio -> [{name, t, scale}] or None."""
+    loaded = get_accent_model()
+    if loaded is None:
+        return None
+    import librosa
+    import torch
+
+    from train_scheduler import audio_features, stack_context
+
+    model, mean, std, meta = loaded
+    if sr != 16000:
+        audio = librosa.resample(audio, orig_sr=sr, target_sr=16000)
+    n = int(len(audio) / 16000 * meta["fps"])
+    if n < meta["fps"]:
+        return []
+    X = (stack_context(audio_features(audio, 16000, n)) - mean) / std
+    with torch.no_grad():
+        p = torch.sigmoid(model(torch.from_numpy(X))).numpy()  # (n, 2)
+    th = meta.get("thresholds", [0.5, 0.5])
+    accents = []
+    last_t = -10.0
+    for f in range(n):
+        prob_nod, prob_shake = float(p[f, 0]), float(p[f, 1])
+        over = [prob_nod - th[0], prob_shake - th[1]]
+        best = max(prob_nod, prob_shake)
+        if max(over) < 0:
+            continue
+        t = f / meta["fps"]
+        if t - last_t < 0.9:
+            continue
+        name = "agree" if over[0] >= over[1] else "headShake"
+        accents.append({"name": name, "t": round(t, 2),
+                        "scale": round((0.35 + 0.65 * best) * (0.5 + 0.5 * intensity), 2)})
+        last_t = t
+    return accents
+
+
+def build_schedule(words, duration, emotion, intensity, audio=None, sr=16000):
     """Decide which prebaked clip plays when: talk loops over speech spans,
-    idle over long gaps, additive accents on punctuation/negation. This is
-    the 'model decides' hook — currently prosody+emotion rules over the
-    trained emotion styles; a learned scheduler can replace it in place."""
+    idle over long gaps, additive accents. Accents come from the LEARNED
+    scheduler (audio prosody -> nod/shake, trained on BEAT2 head motion)
+    when its checkpoint exists, else from punctuation/negation rules."""
     base_name = BASE_LOOP.get(emotion, "talk_neutral")
     segs, accents = [], []
     if not words:
@@ -257,7 +325,12 @@ def build_schedule(words, duration, emotion, intensity):
         cursor = s1 + 0.25
     segs[-1]["t1"] = round(max(segs[-1]["t1"], duration), 2)
 
-    # Accents: nod at sentence ends (alternating), headshake on negation
+    if audio is not None:
+        learned = learned_accents(audio, sr, intensity)
+        if learned is not None:
+            return {"base": segs, "accents": learned}
+
+    # Fallback: nod at sentence ends (alternating), headshake on negation
     # for the tense emotions. Deterministic given the text.
     flip = True
     for w, t0, t1 in words:
@@ -325,7 +398,7 @@ def create_app():
 
         s = max(0.0, min(1.0, req.intensity))
         duration = len(audio) / sr
-        schedule = build_schedule(words, duration, req.emotion, s)
+        schedule = build_schedule(words, duration, req.emotion, s, audio=audio, sr=sr)
         schedule["mood"] = mood * s
         out = {
             "schedule": schedule,

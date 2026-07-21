@@ -145,6 +145,12 @@ def main():
         help="freeze the pretrained net; train just the emotion embeddings "
         "(textual-inversion-style — tiny VRAM, base quality preserved)",
     )
+    ap.add_argument(
+        "--unfreeze", default=None,
+        help="comma list of extra trainable groups: heads (VQ cls + out "
+        "projections, ~2.4M), latent (motion2latent adapters, ~3.5M). "
+        "Implies embeddings are trainable too.",
+    )
     ap.add_argument("--cpu", action="store_true")
     args = ap.parse_args()
 
@@ -184,11 +190,20 @@ def main():
             setattr(model, name, new)
         model.cfg.speaker_dims = len(EMOTIONS)
         model.config.speaker_dims = len(EMOTIONS)
-    if args.embeddings_only:
+    if args.embeddings_only or args.unfreeze:
+        groups = set((args.unfreeze or "").split(",")) - {""}
+        def trainable_name(n: str) -> bool:
+            if "speaker_embedding" in n:
+                return True
+            if "heads" in groups and ("_cls" in n or "cls_" in n or "out_proj" in n):
+                return True
+            if "latent" in groups and "motion2latent" in n:
+                return True
+            return False
         for name, p in model.named_parameters():
-            p.requires_grad = "speaker_embedding" in name
+            p.requires_grad = trainable_name(name)
         trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
-        print(f"embeddings-only: {trainable} trainable params", flush=True)
+        print(f"trainable params: {trainable/1e6:.2f}M (groups: embeddings+{groups})", flush=True)
     model.train()
 
     train_wins, val_wins = build_windows(args.length, args.stride)
@@ -206,8 +221,16 @@ def main():
     val_loader = DataLoader(Windows(val_wins, args.length), batch_size=args.bs, num_workers=2)
 
     lr = args.lr if args.lr is not None else (1e-2 if args.embeddings_only else 5e-5)
+    emb_params = [p for n, p in model.named_parameters() if p.requires_grad and "speaker_embedding" in n]
+    other_params = [p for n, p in model.named_parameters() if p.requires_grad and "speaker_embedding" not in n]
+    # Pretrained (or warm-resumed) non-embedding layers get a gentler LR
+    # than the conditioning embeddings.
     opt = torch.optim.Adam(
-        [p for p in model.parameters() if p.requires_grad], lr=lr, betas=(0.9, 0.999),
+        [
+            {"params": emb_params, "lr": lr if args.lr is not None else 1e-3},
+            {"params": other_params, "lr": lr if args.lr is not None else 1e-4},
+        ],
+        betas=(0.9, 0.999),
     )
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=args.steps)
     cls_fn = nn.NLLLoss()
