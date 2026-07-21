@@ -9,6 +9,10 @@ generation, optionally emotion-fine-tuned on BEAT2) synthesizes the voice
 and generates full-body gestures that play back on the character, in sync
 with procedural lip sync, blinking, and mood.
 
+> **New here?** Read **[docs/STATE.md](docs/STATE.md)** first — it's the
+> orientation doc (architecture, what works, how to run, what's committed
+> vs local-only).
+
 ## Quick start
 
 ```sh
