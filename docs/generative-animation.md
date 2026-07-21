@@ -129,7 +129,16 @@ Decisions and reasons:
    audio, with sensible signatures (happiness most divergent + energetic,
    fear/surprise biggest hand travel, neutral calmest). ml/eval_emotion.py
    reproduces the table; the sidecar auto-loads the checkpoint.
-5. Facial channel: EMAGE's FLAME face output → VRM expressions mapping.
-6. Longer/full-model training when the GPU is free (current run fit in
+5. ~~Generated finger articulation~~ — EMAGE's 30 SMPL-X hand joints ride
+   MotionClip as world-delta tracks; retarget onto VRM and Mixamo finger
+   bones (T-pose captured pre-calibration); procedural curl stands down.
+6. ~~Phoneme-timed lip sync~~ — Kokoro token phonemes → viseme track
+   played against the audio clock; brightness heuristic remains the
+   fallback for plain audio/mic.
+7. ~~Emotion intensity~~ — neutral↔emotion embedding interpolation at
+   inference (scratch row), slider in the Speak panel.
+8. Facial channel: EMAGE's FLAME face output → VRM expressions mapping
+   (would need a FLAME→VRM blendshape basis; TTS visemes cover the mouth).
+9. Longer/full-model training when the GPU is free (embeddings run fit in
    ~1.2 GiB because resident LLM/TTS services hold the rest); more
    speakers; explicit emotion CFG; DiP/MoMask for text-described actions.

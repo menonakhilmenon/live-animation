@@ -9,7 +9,8 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "test:e2e": "node e2e/make-wav.cjs && node e2e/drive.cjs",
-    "fetch:model": "node scripts/fetch-model.mjs"
+    "fetch:model": "node scripts/fetch-model.mjs",
+    "sidecar": "ml/.venv/bin/python ml/server.py"
   },
   "dependencies": {
     "@pixiv/three-vrm": "^3.5.5",
