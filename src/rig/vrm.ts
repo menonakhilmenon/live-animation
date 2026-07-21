@@ -106,7 +106,29 @@ export async function loadVRMRig(url: string): Promise<HumanoidRig> {
   }
   if (missing.length) throw new Error(`loadVRMRig(${url}): missing bones: ${missing.join(', ')}`);
 
+  // Capture finger T-pose world orientations BEFORE finalizeRig lowers the
+  // arms — clip retargeting needs the canonical T-pose reference frame.
+  root.updateMatrixWorld(true);
+  const fingerRetarget: NonNullable<HumanoidRig['fingerRetarget']> = {};
+  for (const side of ['left', 'right'] as const) {
+    for (const digit of ['Thumb', 'Index', 'Middle', 'Ring', 'Little']) {
+      for (const seg of digit === 'Thumb'
+        ? ['Metacarpal', 'Proximal', 'Distal']
+        : ['Proximal', 'Intermediate', 'Distal']) {
+        const name = `${side}${digit}${seg}`;
+        const node = vrm.humanoid.getNormalizedBoneNode(name as VRMHumanBoneName);
+        if (node) {
+          fingerRetarget[name] = {
+            node,
+            tposeWorld: node.getWorldQuaternion(new THREE.Quaternion()),
+          };
+        }
+      }
+    }
+  }
+
   const rig = finalizeRig(root, joints);
+  if (Object.keys(fingerRetarget).length) rig.fingerRetarget = fingerRetarget;
   rig.face = new VRMFace(vrm);
   rig.tick = (dt) => vrm.update(dt);
 

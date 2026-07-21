@@ -28,6 +28,13 @@ export interface MotionClip {
   loop?: boolean;
   /** Emotional bias for the face while this clip plays (-1 sad … +1 happy). */
   mood?: number;
+  /**
+   * Optional articulated-hand tracks: VRM finger bone names (parent bones
+   * before child bones within each digit) with per-frame world deltas from
+   * T-pose, same convention as the body. Played on rigs exposing
+   * `fingerRetarget`; other rigs keep their procedural curl.
+   */
+  fingers?: { joints: string[]; rotations: number[][][] };
 }
 
 /** Parent-first application order (ancestors before descendants). */
@@ -82,6 +89,11 @@ export class ClipPlayer {
 
   get mood(): number {
     return this.clip?.mood ?? 0;
+  }
+
+  /** Whether the active clip carries its own finger animation. */
+  get hasFingers(): boolean {
+    return !!this.clip?.fingers;
   }
 
   /**
@@ -151,6 +163,27 @@ export class ClipPlayer {
       if (w < 1) node.quaternion.slerp(tmpQa, w);
       else node.quaternion.copy(tmpQa);
       node.updateMatrixWorld(true);
+    }
+
+    // Articulated fingers, when both the clip and the rig support them.
+    if (clip.fingers && rig.fingerRetarget) {
+      for (const [i, name] of clip.fingers.joints.entries()) {
+        const target = rig.fingerRetarget[name];
+        if (!target) continue;
+        const r0 = clip.fingers.rotations[f0][i];
+        const r1 = clip.fingers.rotations[f1][i];
+        tmpQa.set(r0[0], r0[1], r0[2], r0[3]);
+        tmpQb.set(r1[0], r1[1], r1[2], r1[3]);
+        tmpQa.slerp(tmpQb, mix);
+        tmpQa.multiply(target.tposeWorld);
+        if (target.node.parent) {
+          target.node.parent.getWorldQuaternion(tmpParent);
+          tmpQa.premultiply(tmpParent.invert());
+        }
+        if (w < 1) target.node.quaternion.slerp(tmpQa, w);
+        else target.node.quaternion.copy(tmpQa);
+        target.node.updateMatrixWorld(false);
+      }
     }
 
     return clip.pinFeet !== false;

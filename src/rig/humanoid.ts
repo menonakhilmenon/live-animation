@@ -62,6 +62,13 @@ export interface HumanoidRig {
    * skeleton regardless of its local bone frames (see animation/clip.ts).
    */
   tposeWorld: Record<JointName, THREE.Quaternion>;
+  /**
+   * Same T-pose reference for individual finger bones, keyed by VRM
+   * humanoid finger names (e.g. "leftIndexProximal") — present when the
+   * model has retargetable fingers. Lets generated clips drive articulated
+   * hands instead of the procedural curl.
+   */
+  fingerRetarget?: Record<string, { node: THREE.Object3D; tposeWorld: THREE.Quaternion }>;
   /** Facial expression driver, when the model has one (VRM). */
   face?: FaceDriver;
   /**

@@ -334,7 +334,9 @@ export class Animator {
         setWorldQuaternion(j[`${s}Foot`], anchor.quat);
       }
     }
-    if (this.rig.fingers) {
+    // Procedural curl stands down when an active clip animates the fingers.
+    const clipOwnsFingers = this.clipPlayer.active && this.clipPlayer.hasFingers;
+    if (this.rig.fingers && !clipOwnsFingers) {
       for (const s of ['left', 'right'] as const) {
         const c = this.curl[s].update(this.curlTarget[s], dt);
         for (const fj of this.rig.fingers[s]) {

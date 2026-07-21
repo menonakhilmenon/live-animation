@@ -60,11 +60,33 @@ def quat_mul(a: np.ndarray, b: np.ndarray) -> np.ndarray:
     )
 
 
+# SMPL-X finger joints: indices 25-39 (left), 40-54 (right); chain order
+# index/middle/pinky/ring/thumb × three segments, each segment's parent is
+# the previous one and segment 1 hangs off the wrist (20 left / 21 right).
+FINGER_DIGITS = [("index", "Index"), ("middle", "Middle"), ("pinky", "Little"),
+                 ("ring", "Ring"), ("thumb", "Thumb")]
+
+
+def finger_layout():
+    """[(smplxIdx, parentSmplxIdx, vrmName)] in parent-first chain order."""
+    out = []
+    for side, base, wrist in (("left", 25, 20), ("right", 40, 21)):
+        for d, (_, vrm_digit) in enumerate(FINGER_DIGITS):
+            segs = (["Metacarpal", "Proximal", "Distal"] if vrm_digit == "Thumb"
+                    else ["Proximal", "Intermediate", "Distal"])
+            for s in range(3):
+                idx = base + d * 3 + s
+                parent = wrist if s == 0 else idx - 1
+                out.append((idx, parent, f"{side}{vrm_digit}{segs[s]}"))
+    return out
+
+
 def poses_to_clip(poses: np.ndarray, trans: np.ndarray, fps: int, pin_feet: bool) -> dict:
     """(t, 55*3) SMPL-X axis-angle + (t, 3) translation -> MotionClip dict."""
     t = poses.shape[0]
-    aa = poses.reshape(t, -1, 3)[:, :22]
-    local = axis_angle_to_quat(aa)  # (t, 22, 4)
+    aa = poses.reshape(t, -1, 3)
+    nj = aa.shape[1]
+    local = axis_angle_to_quat(aa)  # (t, nj, 4)
 
     world = np.zeros_like(local)
     for j in range(22):
@@ -74,6 +96,16 @@ def poses_to_clip(poses: np.ndarray, trans: np.ndarray, fps: int, pin_feet: bool
     joints = [name for i, name in sorted(SMPLX_TO_JOINT.items()) if name]
     idxs = [i for i, name in sorted(SMPLX_TO_JOINT.items()) if name]
     rotations = world[:, idxs]  # (t, len(joints), 4)
+
+    fingers = None
+    if nj >= 55:
+        layout = finger_layout()
+        for idx, parent, _ in layout:  # parent-first: parents already done
+            world[:, idx] = quat_mul(world[:, parent], local[:, idx])
+        fingers = {
+            "joints": [name for _, _, name in layout],
+            "rotations": np.round(world[:, [i for i, _, _ in layout]], 5).tolist(),
+        }
 
     # Root translation: EMAGE integrates a predicted velocity, which wanders
     # over long clips (~0.8 m over 8 s observed). High-pass X/Z against a
@@ -85,13 +117,16 @@ def poses_to_clip(poses: np.ndarray, trans: np.ndarray, fps: int, pin_feet: bool
     for i in range(t):
         ema += alpha * (hips[i, [0, 2]] - ema)
         hips[i, [0, 2]] -= ema
-    return {
+    clip = {
         "fps": fps,
         "joints": joints,
         "rotations": np.round(rotations, 5).tolist(),
         "hipsPosition": np.round(hips, 5).tolist(),
         "pinFeet": pin_feet,
     }
+    if fingers:
+        clip["fingers"] = fingers
+    return clip
 
 
 def main() -> None:

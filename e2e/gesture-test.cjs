@@ -57,10 +57,20 @@ function check(name, ok, detail) {
         j[n].getWorldPosition(v);
         return [v.x, v.y, v.z];
       };
+      // Index fingertip relative to the wrist — moves only if the clip's
+      // articulated finger tracks actually drive the hand.
+      let fingerRel = null;
+      const fr = window.__app.rig.fingerRetarget;
+      if (fr && fr.rightIndexDistal) {
+        const tip = fr.rightIndexDistal.node.getWorldPosition(v.clone());
+        const wrist = j.rightHand.getWorldPosition(v.clone());
+        fingerRel = [tip.x - wrist.x, tip.y - wrist.y, tip.z - wrist.z];
+      }
       return {
         lh: grab('leftHand'), rh: grab('rightHand'),
         head: grab('head'), hips: grab('hips'),
         lf: grab('leftFoot'), rf: grab('rightFoot'),
+        fingerRel,
       };
     });
 
@@ -68,6 +78,7 @@ function check(name, ok, detail) {
   await page.evaluate((c) => window.__app.playClip(c), clip);
 
   let handTravel = 0;
+  let fingerTravel = 0;
   let minHeadAboveHips = Infinity;
   let maxHipsDrift = 0;
   let prev = null;
@@ -78,6 +89,9 @@ function check(name, ok, detail) {
     if (prev) {
       handTravel += Math.hypot(...p.rh.map((v, k) => v - prev.rh[k]));
       handTravel += Math.hypot(...p.lh.map((v, k) => v - prev.lh[k]));
+      if (p.fingerRel && prev.fingerRel) {
+        fingerTravel += Math.hypot(...p.fingerRel.map((v, k) => v - prev.fingerRel[k]));
+      }
     }
     minHeadAboveHips = Math.min(minHeadAboveHips, p.head[1] - p.hips[1]);
     maxHipsDrift = Math.max(
@@ -98,6 +112,10 @@ function check(name, ok, detail) {
   check('hands actually gesture', handTravel > 0.5,
     `total hand travel=${handTravel.toFixed(2)}m over ${seconds.toFixed(1)}s`);
   check('hips stay grounded', maxHipsDrift < 0.5, `driftXZ=${maxHipsDrift.toFixed(3)}m`);
+  if (clip.fingers && prev?.fingerRel) {
+    check('fingers articulate (generated tracks)', fingerTravel > 0.02,
+      `fingertip-vs-wrist travel=${fingerTravel.toFixed(3)}m`);
+  }
   const active = await page.evaluate(() => window.__app.animator.clipPlayer.active);
   check('clip still playing (or finished cleanly)', active || seconds >= clip.rotations.length / clip.fps);
   check('zero console errors', consoleErrors.length === 0, consoleErrors.join(' | '));
