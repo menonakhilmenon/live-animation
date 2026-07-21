@@ -11,6 +11,8 @@ export interface UIHooks {
   /** Preferred playback: prebaked library clips per the sidecar's schedule.
    * Returns false when the library can't serve it (caller falls back). */
   playSchedule: (schedule: GestureSchedule, clock: () => number) => boolean;
+  /** End scheduled playback (procedural behavior resumes). */
+  stopSchedule: () => void;
   /** Install (or clear) a phoneme-timed lip-sync track. */
   setVisemes: (events: VisemeEvent[] | null, clock?: () => number) => void;
 }
@@ -98,6 +100,11 @@ export function setupUI(engine: AudioEngine, hooks: UIHooks): void {
           const scheduled =
             !!schedule?.base?.length && hooks.playSchedule(schedule, () => audioEl.currentTime);
           if (!scheduled && clip) hooks.playClip(clip);
+          // The audio clock freezes at the end, which would hold the last
+          // scheduled pose forever — release back to procedural behavior.
+          if (scheduled) {
+            audioEl.addEventListener('ended', () => hooks.stopSchedule(), { once: true });
+          }
         },
         { once: true },
       );

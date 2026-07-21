@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { AudioFeatures } from '../audio/features';
 import { HumanoidRig, JointName } from '../rig/humanoid';
 import { MotionClip } from './clip';
 
@@ -34,6 +35,19 @@ const ACCENT_WEIGHT: Partial<Record<JointName, number>> = {
 };
 /** Longest slice of an accent clip to play, seconds. */
 const ACCENT_MAX_S = 1.6;
+
+/**
+ * Speech-energy gesture gain: how strongly each joint's motion is scaled
+ * by voice activity. Arms follow the voice (people gesture on stressed
+ * syllables and rest between phrases); torso/head keep more of their
+ * baseline sway so the character never freezes.
+ */
+const GAIN_WEIGHT: Partial<Record<JointName, number>> = {
+  leftShoulder: 1, leftUpperArm: 1, leftLowerArm: 1, leftHand: 1,
+  rightShoulder: 1, rightUpperArm: 1, rightLowerArm: 1, rightHand: 1,
+  spine: 0.45, chest: 0.45, neck: 0.3, head: 0.3, hips: 0.45,
+};
+const GAIN_MIN = 0.25;
 
 const qA = new THREE.Quaternion();
 const qB = new THREE.Quaternion();
@@ -84,6 +98,8 @@ export class SchedulePlayer {
   private library: Record<string, MotionClip> = {};
   /** Global blend-in weight so scheduled playback eases in from rest. */
   private startedAt = -1;
+  /** Smoothed speech-activity gain (fast attack, slow release). */
+  private gain = GAIN_MIN;
 
   setLibrary(clips: Record<string, MotionClip>): void {
     this.library = { ...this.library, ...clips };
@@ -128,9 +144,18 @@ export class SchedulePlayer {
   }
 
   /** Pose the rig (already reset to rest). Returns overall blend weight. */
-  apply(rig: HumanoidRig, dtWall: number): number {
+  apply(rig: HumanoidRig, dtWall: number, features?: AudioFeatures): number {
     const sched = this.schedule!;
     const t = this.clock!();
+
+    // Voice-activity gain: gestures bloom on speech energy and settle to a
+    // calm stance in the gaps — a short greeting no longer inherits a full
+    // monologue's arm choreography.
+    const target = features
+      ? Math.min(1, GAIN_MIN + features.rms * 4.2 + features.onset * 0.25)
+      : 1;
+    const tau = target > this.gain ? 0.09 : 0.5;
+    this.gain += (target - this.gain) * Math.min(1, dtWall / tau);
     if (this.startedAt < 0) this.startedAt = t;
     const wIn = smoothstep((t - this.startedAt) / FADE);
     const lastBase = sched.base[sched.base.length - 1];
@@ -157,6 +182,7 @@ export class SchedulePlayer {
       resolve: (name: string) => { node: THREE.Object3D; tpose: THREE.Quaternion } | null,
       idxOf: (clipOfSeg: MotionClip, name: string) => number,
       clipOf: (c: MotionClip) => MotionClip | null,
+      gainOf: (name: string) => number,
     ) => {
       for (const name of names) {
         const target = resolve(name);
@@ -175,6 +201,15 @@ export class SchedulePlayer {
             qA.copy(qB);
           }
         }
+        // Voice-activity gain: pull toward the clip's calm frame 0.
+        const gw = gainOf(name);
+        if (gw > 0 && this.gain < 1) {
+          const g = 1 - gw * (1 - this.gain);
+          const r0 = c.rotations[0][i];
+          qRef.set(r0[0], r0[1], r0[2], r0[3]);
+          qRef.slerp(qA, g);
+          qA.copy(qRef);
+        }
         qA.multiply(target.tpose);
         if (target.node.parent) {
           target.node.parent.getWorldQuaternion(qParent);
@@ -191,6 +226,7 @@ export class SchedulePlayer {
       (n) => ({ node: rig.joints[n as JointName], tpose: rig.tposeWorld[n as JointName] }),
       (c, n) => c.joints.indexOf(n as JointName),
       (c) => c,
+      (n) => GAIN_WEIGHT[n as JointName] ?? 0,
     );
     if (rig.fingerRetarget) {
       applyJointSet(
@@ -201,6 +237,7 @@ export class SchedulePlayer {
         },
         (c, n) => (c.fingers ? c.fingers.joints.indexOf(n) : -1),
         (c) => (c.fingers ? ({ ...c, joints: c.fingers.joints as JointName[], rotations: c.fingers.rotations } as MotionClip) : null),
+        () => 1, // fingers ride with the hands
       );
     }
 
@@ -216,7 +253,10 @@ export class SchedulePlayer {
       hips.parent.getWorldQuaternion(qParent);
       vTmp.applyQuaternion(qParent.invert());
     }
-    hips.position.addScaledVector(vTmp, rig.positionScale * w);
+    hips.position.addScaledVector(
+      vTmp,
+      rig.positionScale * w * (1 - (GAIN_WEIGHT.hips ?? 0.45) * (1 - this.gain)),
+    );
 
     // --- Accents: additive head-gesture one-shots on top of the base ---
     for (const accent of sched.accents) {

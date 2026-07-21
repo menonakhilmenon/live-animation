@@ -122,7 +122,7 @@ export class Animator {
       resetToRest(this.rig);
       this.ensureFootAnchors();
       if (this.faceAnimator) this.faceAnimator.moodBias = this.schedulePlayer.mood;
-      const w = this.schedulePlayer.apply(this.rig, dt);
+      const w = this.schedulePlayer.apply(this.rig, dt, f);
       const j = this.rig.joints;
       // Gaze leveling: source recordings often look below the camera —
       // pull head/neck world orientation partway toward the forward-facing

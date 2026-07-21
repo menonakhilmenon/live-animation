@@ -86,6 +86,7 @@ let animator = new Animator(activeRig);
 setupUI(audio, {
   playClip: (clip) => animator.playClip(clip),
   playSchedule: (schedule, clock) => animator.playSchedule(schedule, clock),
+  stopSchedule: () => animator.schedulePlayer.stop(),
   setVisemes: (events, clock) => animator.faceAnimator?.setVisemeTrack(events, clock),
 });
 
