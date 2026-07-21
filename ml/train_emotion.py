@@ -281,7 +281,7 @@ def main():
         return total
 
     os.makedirs(OUT, exist_ok=True)
-    it, t0, ema_loss = 0, time.time(), None
+    it, t0, ema_loss, best_val = 0, time.time(), None, float("inf")
     while it < args.steps:
         for batch in train_loader:
             if it >= args.steps:
@@ -303,9 +303,13 @@ def main():
                 model.save_pretrained(OUT)
                 with torch.no_grad():
                     model.eval()
-                    vl = [losses(b, it) for _, b in zip(range(8), val_loader)]
+                    vl = [losses(b, it) for _, b in zip(range(24), val_loader)]
                     model.train()
-                print(f"iter {it} saved -> {OUT}  val_loss {np.mean(vl):.4f}", flush=True)
+                val = float(np.mean(vl))
+                if val < best_val:
+                    best_val = val
+                    model.save_pretrained(OUT + "_best")
+                print(f"iter {it} saved -> {OUT}  val_loss {val:.4f} (best {best_val:.4f})", flush=True)
     print("TRAINING DONE", flush=True)
 
 

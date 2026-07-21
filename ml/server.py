@@ -275,22 +275,27 @@ def learned_accents(audio: np.ndarray, sr: int, intensity: float):
     X = (stack_context(audio_features(audio, 16000, n)) - mean) / std
     with torch.no_grad():
         p = torch.sigmoid(model(torch.from_numpy(X))).numpy()  # (n, 2)
-    th = meta.get("thresholds", [0.5, 0.5])
+    # The model's calibration is conservative (precision-first thresholds
+    # rarely fire) but its RANKING carries signal — select the top peaks at
+    # a natural accent rate (~1 per 4 s) with NMS, probability floor 0.25.
+    fps = meta["fps"]
+    want = max(1, int(n / fps / 4.0))
+    peak = p.max(axis=1)
+    order = np.argsort(-peak)
+    chosen = []
+    for f in order:
+        if peak[f] < 0.25 or len(chosen) >= want:
+            break
+        t = f / fps
+        if any(abs(t - c) < 1.2 for c in chosen):
+            continue
+        chosen.append(t)
     accents = []
-    last_t = -10.0
-    for f in range(n):
-        prob_nod, prob_shake = float(p[f, 0]), float(p[f, 1])
-        over = [prob_nod - th[0], prob_shake - th[1]]
-        best = max(prob_nod, prob_shake)
-        if max(over) < 0:
-            continue
-        t = f / meta["fps"]
-        if t - last_t < 0.9:
-            continue
-        name = "agree" if over[0] >= over[1] else "headShake"
+    for t in sorted(chosen):
+        f = int(t * fps)
+        name = "agree" if p[f, 0] >= p[f, 1] else "headShake"
         accents.append({"name": name, "t": round(t, 2),
-                        "scale": round((0.35 + 0.65 * best) * (0.5 + 0.5 * intensity), 2)})
-        last_t = t
+                        "scale": round((0.35 + 0.65 * float(peak[f])) * (0.5 + 0.5 * intensity), 2)})
     return accents
 
 
@@ -302,7 +307,11 @@ def build_schedule(words, duration, emotion, intensity, audio=None, sr=16000):
     base_name = BASE_LOOP.get(emotion, "talk_neutral")
     segs, accents = [], []
     if not words:
+        # Raw audio, no transcript: the learned prosody model is the only
+        # accent signal available.
         segs.append({"name": base_name, "t0": 0.0, "t1": round(duration, 2)})
+        if audio is not None:
+            accents = learned_accents(audio, sr, intensity) or []
         return {"base": segs, "accents": accents}
 
     # Speech spans: words separated by <0.9 s belong to one span.
@@ -325,13 +334,10 @@ def build_schedule(words, duration, emotion, intensity, audio=None, sr=16000):
         cursor = s1 + 0.25
     segs[-1]["t1"] = round(max(segs[-1]["t1"], duration), 2)
 
-    if audio is not None:
-        learned = learned_accents(audio, sr, intensity)
-        if learned is not None:
-            return {"base": segs, "accents": learned}
-
-    # Fallback: nod at sentence ends (alternating), headshake on negation
-    # for the tense emotions. Deterministic given the text.
+    # Text inputs know their sentence structure — punctuation places nods
+    # more reliably than the prosody model (val precision ~0.2, an honest
+    # limit of audio->gesture prediction). The learned model serves the
+    # transcript-less path below.
     flip = True
     for w, t0, t1 in words:
         token = w.strip().lower()
