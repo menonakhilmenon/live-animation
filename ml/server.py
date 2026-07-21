@@ -239,7 +239,7 @@ NEGATIVE_WORDS = {"no", "not", "never", "nothing", "wrong", "unacceptable", "wor
 # on. "mocap" uses our BEAT2-baked emotion loops; "bg3" uses a game-authored
 # standing idle (Larian, extracted) with the emotion gestures as an additive
 # overlay — game reference as the base layer.
-GAME_BASES = {"bg3": "base_bg3"}
+GAME_BASES = {"bg3": "base_bg3", "ff16": "base_ff16", "ffxv": "base_ffxv"}
 ACCENT_CKPT = os.path.join(os.path.dirname(__file__), "checkpoints", "scheduler")
 
 

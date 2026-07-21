@@ -82,7 +82,10 @@ const library: Record<string, MotionClip> = {};
 // Baked talk/idle loops (ml/bake_library.py output). Missing files are fine.
 for (const name of [
   'talk_neutral', 'talk_happiness', 'talk_anger', 'talk_sadness', 'talk_overlay_ffxv',
-  'base_bg3', // game-authored standing base (BG3 IDLE_Still, arms-down calm)
+  // game-authored standing bases (rest-pose-corrected arms-down):
+  'base_bg3', // BG3 IDLE_Still
+  'base_ff16', // FFXVI talk_relax (Clive)
+  'base_ffxv', // FFXV standing idle
 ]) {
   loadClipJSON(`/anims/${name}.json`)
     .then((clip) => {
