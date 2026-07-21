@@ -234,6 +234,12 @@ BASE_LOOP = {
     "angry": "talk_anger", "sad": "talk_sadness",
 }
 NEGATIVE_WORDS = {"no", "not", "never", "nothing", "wrong", "unacceptable", "worst", "bad"}
+
+# Base-layer style: which clip provides the standing stance the gestures ride
+# on. "mocap" uses our BEAT2-baked emotion loops; "bg3" uses a game-authored
+# standing idle (Larian, extracted) with the emotion gestures as an additive
+# overlay — game reference as the base layer.
+GAME_BASES = {"bg3": "base_bg3"}
 ACCENT_CKPT = os.path.join(os.path.dirname(__file__), "checkpoints", "scheduler")
 
 
@@ -309,12 +315,35 @@ def learned_accents(audio: np.ndarray, sr: int, intensity: float):
     return accents
 
 
-def build_schedule(words, duration, emotion, intensity, audio=None, sr=16000):
+def build_schedule(words, duration, emotion, intensity, audio=None, sr=16000, base_style="mocap"):
     """Decide which prebaked clip plays when: talk loops over speech spans,
     idle over long gaps, additive accents. Accents come from the LEARNED
     scheduler (audio prosody -> nod/shake, trained on BEAT2 head motion)
-    when its checkpoint exists, else from punctuation/negation rules."""
-    base_name = BASE_LOOP.get(emotion, "talk_neutral")
+    when its checkpoint exists, else from punctuation/negation rules.
+
+    base_style selects the base layer: 'mocap' = our emotion loops; a game
+    key ('bg3') = a game-authored standing idle as the base, with the
+    emotion gesture layered as a stronger additive overlay on top."""
+    game_base = GAME_BASES.get(base_style)
+    base_name = game_base or BASE_LOOP.get(emotion, "talk_neutral")
+    # When a game idle is the base (calm, no talk gestures of its own), the
+    # emotion's own talk motion must ride as the additive layer, not just
+    # the FFXV flourish — so overlay weight is higher.
+    overlay_weight = round((0.7 if game_base else 0.35) * intensity, 2)
+
+    # Additive layers riding the base. On a game base, the emotion's own talk
+    # loop rides additively (delta-from-its-neutral = talking arms) so the
+    # game idle carries stance while our motion carries the gesture; plus a
+    # lighter FFXV flourish. On a mocap base, just the FFXV flourish.
+    if game_base:
+        emo_loop = BASE_LOOP.get(emotion, "talk_neutral")
+        additive = [
+            {"name": emo_loop, "weight": overlay_weight, "loop": True},
+            {"name": "talk_overlay_ffxv", "weight": round(0.25 * intensity, 2), "loop": True},
+        ]
+    else:
+        additive = [{"name": "talk_overlay_ffxv", "weight": overlay_weight, "loop": True}]
+
     segs, accents = [], []
     if not words:
         # Raw audio, no transcript: the learned prosody model is the only
@@ -322,8 +351,7 @@ def build_schedule(words, duration, emotion, intensity, audio=None, sr=16000):
         segs.append({"name": base_name, "t0": 0.0, "t1": round(duration, 2)})
         if audio is not None:
             accents = learned_accents(audio, sr, intensity) or []
-        return {"base": segs, "accents": accents,
-                "additive": [{"name": "talk_overlay_ffxv", "weight": round(0.35 * intensity, 2), "loop": True}]}
+        return {"base": segs, "accents": accents, "additive": additive}
 
     # Speech spans: words separated by <0.9 s belong to one span.
     spans = []
@@ -339,9 +367,9 @@ def build_schedule(words, duration, emotion, intensity, audio=None, sr=16000):
     cursor = 0.0
     for s0, s1 in spans:
         if s0 - cursor > 1.2:
-            # 'idle' is Xbot's authored idle clip (converted client-side) —
-            # baking an idle from EMAGE-on-silence produced garbage.
-            segs.append({"name": "idle", "t0": round(cursor, 2), "t1": round(s0 - 0.15, 2)})
+            # Gap filler: the game base IS an idle, so reuse it; otherwise
+            # Xbot's authored idle (EMAGE-on-silence baked garbage).
+            segs.append({"name": game_base or "idle", "t0": round(cursor, 2), "t1": round(s0 - 0.15, 2)})
             cursor = s0 - 0.15
         segs.append({"name": base_name, "t0": round(cursor, 2), "t1": round(s1 + 0.25, 2)})
         cursor = s1 + 0.25
@@ -367,7 +395,6 @@ def build_schedule(words, duration, emotion, intensity, audio=None, sr=16000):
     # is the base+additive composition — the base carries emotion-specific
     # stance, the overlay adds hand-talk life on top. Weight scales with
     # emotion intensity.
-    additive = [{"name": "talk_overlay_ffxv", "weight": round(0.35 * intensity, 2), "loop": True}]
     return {"base": segs, "accents": accents, "additive": additive}
 
 
@@ -396,10 +423,11 @@ def create_app():
         voice: str = "af_heart"
         intensity: float = 1.0  # 0 = neutral gestures, 1 = full emotion
         raw: bool = False  # also return the raw EMAGE clip (debug/fallback)
+        base_style: str = "mocap"  # 'mocap' or a game key ('bg3')
 
     @app.get("/health")
     def health():
-        return {"ok": True, "emotions": list(EMOTIONS)}
+        return {"ok": True, "emotions": list(EMOTIONS), "base_styles": ["mocap", *GAME_BASES]}
 
     @app.post("/animate")
     def animate(req: AnimateRequest):
@@ -423,7 +451,8 @@ def create_app():
 
         s = max(0.0, min(1.0, req.intensity))
         duration = len(audio) / sr
-        schedule = build_schedule(words, duration, req.emotion, s, audio=audio, sr=sr)
+        schedule = build_schedule(words, duration, req.emotion, s, audio=audio, sr=sr,
+                                  base_style=req.base_style)
         schedule["mood"] = mood * s
         out = {
             "schedule": schedule,

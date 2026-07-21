@@ -64,6 +64,13 @@
         <button id="btn-speak">Speak</button>
       </div>
       <div class="row">
+        <label class="meter-label" for="speak-base">base</label>
+        <select id="speak-base" style="flex:1">
+          <option value="mocap">mocap (BEAT2)</option>
+          <option value="bg3">game (BG3 idle)</option>
+        </select>
+      </div>
+      <div class="row">
         <label class="meter-label" for="speak-intensity">intensity</label>
         <input id="speak-intensity" type="range" min="0" max="1" step="0.05" value="1" style="flex:1" />
       </div>

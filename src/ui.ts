@@ -73,6 +73,7 @@ export function setupUI(engine: AudioEngine, hooks: UIHooks): void {
           text,
           emotion: speakEmotion.value,
           intensity: Number(speakIntensity.value),
+          base_style: (document.getElementById('speak-base') as HTMLSelectElement).value,
         }),
       });
       if (!res.ok) throw new Error(`sidecar ${res.status}: ${await res.text()}`);

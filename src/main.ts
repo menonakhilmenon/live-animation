@@ -82,6 +82,7 @@ const library: Record<string, MotionClip> = {};
 // Baked talk/idle loops (ml/bake_library.py output). Missing files are fine.
 for (const name of [
   'talk_neutral', 'talk_happiness', 'talk_anger', 'talk_sadness', 'talk_overlay_ffxv',
+  'base_bg3', // game-authored standing base (BG3 IDLE_Still, arms-down calm)
 ]) {
   loadClipJSON(`/anims/${name}.json`)
     .then((clip) => {
