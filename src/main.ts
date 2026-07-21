@@ -4,6 +4,7 @@ import { AudioEngine } from './audio/engine';
 import { Animator } from './animation/animator';
 import { MotionClip } from './animation/clip';
 import {
+  BG3_BONES,
   convertGLTFAnimations,
   convertNamedSkeletonAnimations,
   FF16_BONES,
@@ -124,6 +125,7 @@ const setActiveRig = (idx: number) => {
       convertNamedSkeletonAnimations,
       FFXV_BONES,
       FF16_BONES,
+      BG3_BONES,
       loadGLTF: (url: string) =>
         import('three/examples/jsm/loaders/GLTFLoader.js').then((m) =>
           new m.GLTFLoader().loadAsync(url),

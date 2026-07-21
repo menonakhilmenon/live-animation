@@ -36,6 +36,16 @@ export const FF16_BONES: Record<string, JointName> = {
   j_leg_01_r: 'rightUpperLeg', j_leg_02_r: 'rightLowerLeg', j_leg_03_r: 'rightFoot',
 };
 
+/** Baldur's Gate 3 (Larian, GR2 via patched LSLib glTF). Bones use _L/_R/_M
+ * suffixes; the pelvis is Root_M (Hip_L/R are the leg roots). */
+export const BG3_BONES: Record<string, JointName> = {
+  Root_M: 'hips', Spine1_M: 'spine', Chest_M: 'chest', Neck_M: 'neck', Head_M: 'head',
+  Scapula_L: 'leftShoulder', Shoulder_L: 'leftUpperArm', Elbow_L: 'leftLowerArm', Wrist_L: 'leftHand',
+  Scapula_R: 'rightShoulder', Shoulder_R: 'rightUpperArm', Elbow_R: 'rightLowerArm', Wrist_R: 'rightHand',
+  Hip_L: 'leftUpperLeg', Knee_L: 'leftLowerLeg', Ankle_L: 'leftFoot',
+  Hip_R: 'rightUpperLeg', Knee_R: 'rightLowerLeg', Ankle_R: 'rightFoot',
+};
+
 /**
  * Convert animations from ANY named skeleton (e.g. a Noesis-exported FBX)
  * into canonical MotionClips. The skeleton's CURRENT pose is taken as its
