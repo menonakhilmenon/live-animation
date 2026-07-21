@@ -50,6 +50,8 @@ def main():
     ap.add_argument("--stem", default="2_scott_0_9_9")  # held-out neutral speech
     ap.add_argument("--seconds", type=float, default=10.0)
     ap.add_argument("--out", default=os.path.join(ROOT, "..", "e2e", ".artifacts", "compare"))
+    ap.add_argument("--temperature", type=float, default=0.0, help="VQ sampling temperature (0 = argmax)")
+    ap.add_argument("--seed", type=int, default=7)
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
 
@@ -92,11 +94,14 @@ def main():
     audio_t = torch.from_numpy(audio_win).to(device).unsqueeze(0)
     sid = emo if model.cfg.speaker_dims >= 8 else 0
     speaker = torch.full((1, 1), sid).long().to(device)
+    from generate import sample_tokens
+
+    gen = torch.Generator(device="cpu").manual_seed(args.seed)
     with torch.no_grad():
         lat = model.inference(audio_t, speaker, motion_vq, masked_motion=None, mask=None)
         cfg = model.cfg
         pick = lambda ck, rk, c, l: (  # noqa: E731
-            torch.max(F.log_softmax(lat[ck], dim=2), dim=2)[1] if c > 0 else None,
+            sample_tokens(lat[ck].cpu(), args.temperature, generator=gen).to(device) if c > 0 else None,
             lat[rk] if l > 0 and c == 0 else None,
         )
         fi, fl = pick("cls_face", "rec_face", cfg.cf, cfg.lf)

@@ -186,16 +186,22 @@ def gestures(
                 w.data[scratch] = (1 - intensity) * w.data[0] + intensity * w.data[emotion_id]
         sid = scratch
     speaker = torch.full((1, 1), sid).long().to(device)
+    from generate import sample_tokens
+
+    # Deterministic per input; T=0.9 on upper/hands restores real-motion
+    # dynamics (argmax measures 5x slower hands than mocap); legs and face
+    # keep argmax for stability.
+    gen = torch.Generator(device="cpu").manual_seed(int(np.abs(audio[:800]).sum() * 1e6) % 2**31)
     with torch.no_grad():
         lat = model.inference(audio_t, speaker, motion_vq, masked_motion=None, mask=None)
         cfg = model.cfg
-        pick = lambda ck, rk, c, l: (  # noqa: E731
-            torch.max(F.log_softmax(lat[ck], dim=2), dim=2)[1] if c > 0 else None,
+        pick = lambda ck, rk, c, l, temp=0.0: (  # noqa: E731
+            sample_tokens(lat[ck].cpu(), temp, generator=gen).to(device) if c > 0 else None,
             lat[rk] if l > 0 and c == 0 else None,
         )
         fi, fl = pick("cls_face", "rec_face", cfg.cf, cfg.lf)
-        ui, ul = pick("cls_upper", "rec_upper", cfg.cu, cfg.lu)
-        hi, hl = pick("cls_hands", "rec_hands", cfg.ch, cfg.lh)
+        ui, ul = pick("cls_upper", "rec_upper", cfg.cu, cfg.lu, 0.9)
+        hi, hl = pick("cls_hands", "rec_hands", cfg.ch, cfg.lh, 0.9)
         li, ll = pick("cls_lower", "rec_lower", cfg.cl, cfg.ll)
         pred = motion_vq.decode(
             face_latent=fl, upper_latent=ul, lower_latent=ll, hands_latent=hl,

@@ -36,6 +36,25 @@ SMPLX_TO_JOINT = {
 }
 
 
+def sample_tokens(logits, temperature: float = 0.0, top_p: float = 0.9, generator=None):
+    """Pick VQ tokens from classifier logits. temperature<=0 -> argmax
+    (EMAGE default, which regresses to the mean: measured 5x slower hands
+    than mocap); otherwise nucleus sampling restores motion dynamics."""
+    import torch
+    import torch.nn.functional as F
+
+    if temperature <= 0:
+        return torch.max(F.log_softmax(logits, dim=2), dim=2)[1]
+    probs = F.softmax(logits / temperature, dim=-1)
+    sp, si = probs.sort(-1, descending=True)
+    cum = sp.cumsum(-1)
+    sp[cum - sp > top_p] = 0
+    sp = sp / sp.sum(-1, keepdim=True)
+    flat = sp.reshape(-1, sp.shape[-1])
+    choice = torch.multinomial(flat, 1, generator=generator)
+    return si.reshape(-1, si.shape[-1]).gather(1, choice).reshape(logits.shape[:-1])
+
+
 def axis_angle_to_quat(aa: np.ndarray) -> np.ndarray:
     """(..., 3) axis-angle -> (..., 4) quaternion [x, y, z, w]."""
     angle = np.linalg.norm(aa, axis=-1, keepdims=True)
@@ -136,6 +155,9 @@ def main() -> None:
     ap.add_argument("--npz-out", help="also save the raw SMPL-X npz here")
     ap.add_argument("--free-feet", action="store_true", help="disable foot IK pinning")
     ap.add_argument("--cpu", action="store_true")
+    ap.add_argument("--temperature", type=float, default=0.9,
+                    help="VQ sampling temperature for upper body/hands (0 = argmax)")
+    ap.add_argument("--seed", type=int, default=7)
     args = ap.parse_args()
 
     import librosa
@@ -161,16 +183,17 @@ def main() -> None:
     trans_seed = torch.zeros(1, 1, 3).to(device)
 
     print(f"generating gestures for {len(audio) / model.cfg.audio_sr:.1f}s of audio ...", flush=True)
+    gen = torch.Generator(device="cpu").manual_seed(args.seed)
     with torch.no_grad():
         lat = model.inference(audio_t, speaker, motion_vq, masked_motion=None, mask=None)
         cfg = model.cfg
-        pick = lambda cls_key, rec_key, c, l: (  # noqa: E731
-            torch.max(F.log_softmax(lat[cls_key], dim=2), dim=2)[1] if c > 0 else None,
+        pick = lambda cls_key, rec_key, c, l, temp=0.0: (  # noqa: E731
+            sample_tokens(lat[cls_key].cpu(), temp, generator=gen).to(device) if c > 0 else None,
             lat[rec_key] if l > 0 and c == 0 else None,
         )
         face_index, face_latent = pick("cls_face", "rec_face", cfg.cf, cfg.lf)
-        upper_index, upper_latent = pick("cls_upper", "rec_upper", cfg.cu, cfg.lu)
-        hands_index, hands_latent = pick("cls_hands", "rec_hands", cfg.ch, cfg.lh)
+        upper_index, upper_latent = pick("cls_upper", "rec_upper", cfg.cu, cfg.lu, args.temperature)
+        hands_index, hands_latent = pick("cls_hands", "rec_hands", cfg.ch, cfg.lh, args.temperature)
         lower_index, lower_latent = pick("cls_lower", "rec_lower", cfg.cl, cfg.ll)
         pred = motion_vq.decode(
             face_latent=face_latent, upper_latent=upper_latent,
