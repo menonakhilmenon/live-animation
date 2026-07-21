@@ -22,6 +22,19 @@ export interface GestureSchedule {
 /** Crossfade length between base segments and accent fade, seconds. */
 const FADE = 0.45;
 
+/** Accents are HEAD gestures: even when the accent clip animates the whole
+ * body (Xbot's agree/headShake are full-body nod-bows), only the head
+ * chain receives it, tapering down the spine — otherwise a nod bows the
+ * torso over the base pose and reads as a glitch. */
+const ACCENT_WEIGHT: Partial<Record<JointName, number>> = {
+  head: 1,
+  neck: 0.9,
+  chest: 0.25,
+  spine: 0.1,
+};
+/** Longest slice of an accent clip to play, seconds. */
+const ACCENT_MAX_S = 1.6;
+
 const qA = new THREE.Quaternion();
 const qB = new THREE.Quaternion();
 const qRef = new THREE.Quaternion();
@@ -205,23 +218,26 @@ export class SchedulePlayer {
     }
     hips.position.addScaledVector(vTmp, rig.positionScale * w);
 
-    // --- Accents: additive one-shots on top of the base pose ---
+    // --- Accents: additive head-gesture one-shots on top of the base ---
     for (const accent of sched.accents) {
       const aclip = this.library[accent.name];
-      const dur = aclip.rotations.length / aclip.fps;
+      const dur = Math.min(aclip.rotations.length / aclip.fps, ACCENT_MAX_S);
       const at = t - accent.t;
       if (at < 0 || at > dur) continue;
       const env =
-        smoothstep(at / 0.25) * smoothstep((dur - at) / 0.35) * (accent.scale ?? 1) * w;
+        smoothstep(at / 0.25) * smoothstep((dur - at) / 0.35) *
+        Math.min(0.7, accent.scale ?? 0.7) * w;
       if (env <= 0) continue;
       for (const [i, name] of aclip.joints.entries()) {
+        const jointWeight = ACCENT_WEIGHT[name as JointName];
+        if (!jointWeight) continue;
         const node = rig.joints[name as JointName];
         if (!node) continue;
         sampleDelta(aclip, i, Math.min(at, dur - 1e-3), qA);
         const r0 = aclip.rotations[0][i];
         qRef.set(r0[0], r0[1], r0[2], r0[3]).invert();
         qA.multiply(qRef); // delta relative to the accent's first frame
-        qParent.identity().slerp(qA, env); // scale the additive rotation
+        qParent.identity().slerp(qA, env * jointWeight); // scaled additive
         node.getWorldQuaternion(qB);
         qB.premultiply(qParent); // additive in world space
         if (node.parent) {

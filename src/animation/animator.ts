@@ -60,6 +60,8 @@ export class Animator {
   /** World-space rest pose of each foot — the ground-contact IK targets. */
   private footAnchors: { pos: THREE.Vector3; quat: THREE.Quaternion }[] | null = null;
 
+  private tmpQuat = new THREE.Quaternion();
+
   /** Co-speech gesture state: one beat-gesture envelope per hand. */
   private gesture = { left: new Spring(0, 35), right: new Spring(0, 35) };
   private gestureTarget = { left: 0, right: 0 };
@@ -122,6 +124,15 @@ export class Animator {
       if (this.faceAnimator) this.faceAnimator.moodBias = this.schedulePlayer.mood;
       const w = this.schedulePlayer.apply(this.rig, dt);
       const j = this.rig.joints;
+      // Gaze leveling: source recordings often look below the camera —
+      // pull head/neck world orientation partway toward the forward-facing
+      // T-pose so the character keeps addressing the audience while the
+      // gesture-correlated head motion survives at reduced amplitude.
+      for (const [joint, k] of [['head', 0.5], ['neck', 0.3]] as const) {
+        j[joint].getWorldQuaternion(this.tmpQuat);
+        this.tmpQuat.slerp(this.rig.tposeWorld[joint], k);
+        setWorldQuaternion(j[joint], this.tmpQuat);
+      }
       const breath = Math.sin(this.t * 1.9) * 0.015;
       j.chest.rotation.x += breath;
       const nod = this.headNod.update(Math.min(1, f.onset * 0.6), dt);

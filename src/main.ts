@@ -73,7 +73,7 @@ let activeRig = capsuleRig;
 /** Shared prebaked-animation library (rig-agnostic canonical clips). */
 const library: Record<string, MotionClip> = {};
 // Baked talk/idle loops (ml/bake_library.py output). Missing files are fine.
-for (const name of ['idle_calm', 'talk_neutral', 'talk_happiness', 'talk_anger', 'talk_sadness']) {
+for (const name of ['talk_neutral', 'talk_happiness', 'talk_anger', 'talk_sadness']) {
   loadClipJSON(`/anims/${name}.json`)
     .then((clip) => {
       library[name] = clip;

@@ -328,7 +328,9 @@ def build_schedule(words, duration, emotion, intensity, audio=None, sr=16000):
     cursor = 0.0
     for s0, s1 in spans:
         if s0 - cursor > 1.2:
-            segs.append({"name": "idle_calm", "t0": round(cursor, 2), "t1": round(s0 - 0.15, 2)})
+            # 'idle' is Xbot's authored idle clip (converted client-side) —
+            # baking an idle from EMAGE-on-silence produced garbage.
+            segs.append({"name": "idle", "t0": round(cursor, 2), "t1": round(s0 - 0.15, 2)})
             cursor = s0 - 0.15
         segs.append({"name": base_name, "t0": round(cursor, 2), "t1": round(s1 + 0.25, 2)})
         cursor = s1 + 0.25

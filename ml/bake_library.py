@@ -30,12 +30,16 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "vendor", "PantoMatri
 
 from generate import poses_to_clip  # noqa: E402
 
+# (line, BEAT emotion id, conditioning intensity). Intensity < 1 lerps the
+# emotion embedding toward neutral: BEAT2's emotion sessions are acted and
+# full-strength styles read as theatrical on casual utterances. The idle
+# loop is NOT baked — EMAGE degenerates on silence; the scheduler uses
+# Xbot's authored 'idle' clip instead.
 LINES = {
-    "idle_calm": ("", 0),  # near-silence -> subtle idle sway
-    "talk_neutral": ("Let me walk you through what happened here, step by step, so it all makes sense.", 0),
-    "talk_happiness": ("This is wonderful news, honestly one of the best things I have heard all year!", 1),
-    "talk_anger": ("This is completely unacceptable, and I need you to understand exactly why right now.", 2),
-    "talk_sadness": ("I really wish things had turned out differently for everyone involved in this.", 3),
+    "talk_neutral": ("So I was thinking about this earlier, and there are a couple of things worth mentioning before we get into the details.", 0, 1.0),
+    "talk_happiness": ("Oh that's really nice to hear, I'm glad it worked out, and honestly it makes me happy just thinking about it.", 1, 0.6),
+    "talk_anger": ("Look, I've said this before and I'll say it again, this is not how it was supposed to go and you know it.", 2, 0.6),
+    "talk_sadness": ("Yeah, I heard about it this morning. It's been on my mind all day, and I still don't really know what to say.", 3, 0.6),
 }
 
 
@@ -63,6 +67,59 @@ def smooth_quats(q, passes=2):
 def align(a, ref):
     d = np.sum(a * ref, axis=-1, keepdims=True)
     return np.where(d < 0, -a, a)
+
+
+def remove_root_yaw(aa):
+    """Zero the Y (turning) component of the pelvis rotation per frame —
+    the source speaker wanders/turns, but a talk LOOP must stay facing
+    forward or it replays whole-body twisting against the foot IK."""
+    out = aa.copy()
+    root = out[:, 0]
+    # Twist-swing decomposition about Y via quaternions.
+    q = axis_angle_to_quat_1(root)
+    twist = q.copy()
+    twist[:, 0] = 0.0
+    twist[:, 2] = 0.0
+    norm = np.linalg.norm(twist, axis=-1, keepdims=True)
+    ok = norm[:, 0] > 1e-8
+    twist[ok] /= norm[ok]
+    twist[~ok] = np.array([0, 0, 0, 1.0])
+    # swing = q * conj(twist)
+    conj = twist * np.array([-1, -1, -1, 1.0])
+    swing = quat_mul_np(q, conj)
+    out[:, 0] = quat_to_axis_angle(swing)
+    return out
+
+
+def axis_angle_to_quat_1(aa):
+    from generate import axis_angle_to_quat
+
+    return axis_angle_to_quat(aa)
+
+
+def quat_mul_np(a, b):
+    from generate import quat_mul
+
+    return quat_mul(a, b)
+
+
+def quat_to_axis_angle(q):
+    q = normalize(q)
+    w = np.clip(q[..., 3:4], -1, 1)
+    ang = 2 * np.arccos(np.abs(w))
+    sign = np.where(w < 0, -1.0, 1.0)
+    s = np.sqrt(np.clip(1 - w * w, 1e-12, None))
+    return q[..., :3] * sign * (ang / s)
+
+
+def rotate_to_calmest_start(q):
+    """Cycle the loop so frame 0 is the frame closest to the sequence mean
+    (short utterances then begin from a near-neutral pose)."""
+    mean = normalize(q.mean(axis=0, keepdims=True))
+    d = np.sum(align(q, mean) * mean, axis=-1).clip(-1, 1)
+    dist = (2 * np.arccos(np.abs(d))).sum(axis=-1)
+    start = int(np.argmin(dist))
+    return np.roll(q, -start, axis=0)
 
 
 def loopify(q, fps, blend_s=1.0):
@@ -106,18 +163,33 @@ def main():
     model = EmageAudioModel.from_pretrained(ckpt if os.path.isdir(ckpt) else hub).to(device).eval()
     tts = KPipeline(lang_code="a", device="cpu", repo_id="hexgrad/Kokoro-82M")
 
-    for name, (line, emo_id) in LINES.items():
-        if line:
-            import librosa
+    # Scratch embedding row for partial-intensity conditioning.
+    import torch.nn as nn
 
-            chunks = [r.audio.numpy() for r in tts(line, voice="af_heart")]
-            audio = np.concatenate(chunks)
-            audio = librosa.resample(audio, orig_sr=24000, target_sr=model.cfg.audio_sr)
-        else:
-            audio = np.random.default_rng(7).normal(0, 1e-4, model.cfg.audio_sr * int(args.seconds)).astype(np.float32)
+    if model.cfg.speaker_dims >= 8:
+        for attr in ("speaker_embedding_body", "speaker_embedding_face"):
+            old = getattr(model, attr)
+            new = nn.Embedding(old.num_embeddings + 1, old.embedding_dim).to(device)
+            new.weight.data[: old.num_embeddings] = old.weight.data
+            setattr(model, attr, new)
+        scratch = model.speaker_embedding_body.num_embeddings - 1
+
+    for name, (line, emo_id, intensity) in LINES.items():
+        import librosa
+
+        chunks = [r.audio.numpy() for r in tts(line, voice="af_heart")]
+        audio = np.concatenate(chunks)
+        audio = librosa.resample(audio, orig_sr=24000, target_sr=model.cfg.audio_sr)
 
         audio_t = torch.from_numpy(audio.astype(np.float32)).to(device).unsqueeze(0)
-        sid = emo_id if model.cfg.speaker_dims >= 8 else 0
+        if model.cfg.speaker_dims >= 8:
+            with torch.no_grad():
+                for attr in ("speaker_embedding_body", "speaker_embedding_face"):
+                    w = getattr(model, attr).weight
+                    w.data[scratch] = (1 - intensity) * w.data[0] + intensity * w.data[emo_id]
+            sid = scratch
+        else:
+            sid = 0
         speaker = torch.full((1, 1), sid).long().to(device)
         with torch.no_grad():
             lat = model.inference(audio_t, speaker, motion_vq, masked_motion=None, mask=None)
@@ -149,9 +221,14 @@ def main():
         # the clip converter (which consumes axis-angle directly).
         from generate import axis_angle_to_quat  # noqa: E402
 
+        poses = remove_root_yaw(poses)
         q = axis_angle_to_quat(poses)  # local quats (t, 55, 4)
         q = smooth_quats(q, passes=2)
+        # Seal the loop seam FIRST, then rotate the phase — rolling before
+        # sealing drags the raw end->start discontinuity into the middle of
+        # the loop (observed as a one-frame 0.33 m hand teleport).
         q = loopify(q, cfg.pose_fps)
+        q = rotate_to_calmest_start(q)
         # quats -> axis-angle
         q = normalize(q)
         w = np.clip(q[..., 3:4], -1, 1)
