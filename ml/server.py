@@ -322,7 +322,8 @@ def build_schedule(words, duration, emotion, intensity, audio=None, sr=16000):
         segs.append({"name": base_name, "t0": 0.0, "t1": round(duration, 2)})
         if audio is not None:
             accents = learned_accents(audio, sr, intensity) or []
-        return {"base": segs, "accents": accents}
+        return {"base": segs, "accents": accents,
+                "additive": [{"name": "talk_overlay_ffxv", "weight": round(0.35 * intensity, 2), "loop": True}]}
 
     # Speech spans: words separated by <0.9 s belong to one span.
     spans = []
@@ -361,7 +362,13 @@ def build_schedule(words, duration, emotion, intensity, audio=None, sr=16000):
         elif token.strip('.,!?') in NEGATIVE_WORDS and emotion in ("angry", "sad"):
             accents.append({"name": "headShake", "t": round(max(0.0, t0 - 0.1), 2),
                             "scale": round(0.4 + 0.6 * intensity, 2)})
-    return {"base": segs, "accents": accents}
+    # Continuous additive layer: a game-derived expressive talk overlay
+    # (arms/torso, delta-from-base) rides the base loop, energy-gated. This
+    # is the base+additive composition — the base carries emotion-specific
+    # stance, the overlay adds hand-talk life on top. Weight scales with
+    # emotion intensity.
+    additive = [{"name": "talk_overlay_ffxv", "weight": round(0.35 * intensity, 2), "loop": True}]
+    return {"base": segs, "accents": accents, "additive": additive}
 
 
 def wav_b64(audio: np.ndarray, sr: int) -> str:

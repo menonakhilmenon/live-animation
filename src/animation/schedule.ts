@@ -17,6 +17,14 @@ export interface GestureSchedule {
   /** One-shot ADDITIVE accents (e.g. a nod): the clip's world-delta
    * relative to its own first frame rides on top of the base pose. */
   accents: { name: string; t: number; scale?: number }[];
+  /**
+   * Continuous ADDITIVE overlay layers, composited on top of the base for
+   * the whole utterance. Each layer's per-frame rotation relative to its
+   * own first frame is added (world-space) to the base pose, scaled by
+   * `weight` and speech energy. This is the base+additive composition that
+   * unlocks game conversational libraries: FFXV/FFXVI store talk motion as
+   * additive-over-base layers, and this plays them on any base stance. */
+  additive?: { name: string; weight?: number; loop?: boolean }[];
   mood?: number;
 }
 
@@ -117,6 +125,7 @@ export class SchedulePlayer {
       ...schedule,
       base: schedule.base.filter((s) => this.library[s.name]),
       accents: schedule.accents.filter((a) => this.library[a.name]),
+      additive: (schedule.additive ?? []).filter((a) => this.library[a.name]),
     };
     this.clock = clock;
     this.startedAt = -1;
@@ -257,6 +266,39 @@ export class SchedulePlayer {
       vTmp,
       rig.positionScale * w * (1 - (GAIN_WEIGHT.hips ?? 0.45) * (1 - this.gain)),
     );
+
+    // --- Additive overlays: continuous expressive layers on the base ---
+    // Each overlay's rotation relative to its own frame 0 is added in world
+    // space to whatever the base already posed, scaled by weight × energy
+    // gain. This is the base+additive composition: a subtle full-body talk
+    // layer (ours or a game's additive clip) rides any base stance.
+    for (const layer of sched.additive ?? []) {
+      const lclip = this.library[layer.name];
+      if (!lclip) continue;
+      const ldur = lclip.rotations.length / lclip.fps;
+      const lt = layer.loop === false ? Math.min(t, ldur - 1e-3) : t % ldur;
+      const baseWeight = (layer.weight ?? 1) * w;
+      for (const [i, name] of lclip.joints.entries()) {
+        const gw = GAIN_WEIGHT[name as JointName] ?? 0.4;
+        const env = baseWeight * (1 - gw * (1 - this.gain));
+        if (env <= 0.01) continue;
+        const node = rig.joints[name as JointName];
+        if (!node) continue;
+        sampleDelta(lclip, i, lt, qA);
+        const r0 = lclip.rotations[0][i];
+        qRef.set(r0[0], r0[1], r0[2], r0[3]).invert();
+        qA.multiply(qRef); // delta from the layer's first frame
+        qParent.identity().slerp(qA, env);
+        node.getWorldQuaternion(qB);
+        qB.premultiply(qParent); // additive, world space
+        if (node.parent) {
+          node.parent.getWorldQuaternion(qParent);
+          qB.premultiply(qParent.invert());
+        }
+        node.quaternion.copy(qB);
+        node.updateMatrixWorld(true);
+      }
+    }
 
     // --- Accents: additive head-gesture one-shots on top of the base ---
     for (const accent of sched.accents) {

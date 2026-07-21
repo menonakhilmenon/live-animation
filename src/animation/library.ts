@@ -27,6 +27,15 @@ export const FFXV_BONES: Record<string, JointName> = {
   R_UpperLeg: 'rightUpperLeg', R_Knee: 'rightLowerLeg', R_Foot: 'rightFoot',
 };
 
+/** FFXVI (Clive rig via FF16-Animation-Converter glTF): j_-prefixed chain. */
+export const FF16_BONES: Record<string, JointName> = {
+  j_hip: 'hips', j_spine_01: 'spine', j_spine_03: 'chest', j_neck_01: 'neck', j_head: 'head',
+  j_clavicle_l: 'leftShoulder', j_arm_01_l: 'leftUpperArm', j_arm_02_l: 'leftLowerArm', j_hand_l: 'leftHand',
+  j_clavicle_r: 'rightShoulder', j_arm_01_r: 'rightUpperArm', j_arm_02_r: 'rightLowerArm', j_hand_r: 'rightHand',
+  j_leg_01_l: 'leftUpperLeg', j_leg_02_l: 'leftLowerLeg', j_leg_03_l: 'leftFoot',
+  j_leg_01_r: 'rightUpperLeg', j_leg_02_r: 'rightLowerLeg', j_leg_03_r: 'rightFoot',
+};
+
 /**
  * Convert animations from ANY named skeleton (e.g. a Noesis-exported FBX)
  * into canonical MotionClips. The skeleton's CURRENT pose is taken as its
