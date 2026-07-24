@@ -108,6 +108,10 @@ FFXVI / BG3 assets were extracted) · **[ml/README.md](../ml/README.md)**
   motion on the FFXVI base sweeps smoothly and monotonically: 24/10 (0.0) →
   88/126 (0.35) → 151/195 (0.6) → 263/305 (1.0) deg/s. The sidecar still
   accepts the legacy `motion_style` preset and `game_faithful` bool.
+  Each emotion has a default slider position (sad 0.12, calm 0.20, neutral
+  0.35, happy 0.45, angry 0.55, excited 0.62) served from `/health`; the UI
+  snaps the slider there on emotion change (the user then trims), and it's
+  also the server-side fallback when a client sends no explicit style.
 - **Game-faithful motion**: our co-speech mocap moves the hands
   ~4–6× more than real game dialogue (BEAT2 talk ~100–146 deg/s vs FFXVI
   `talk_relax` ~6–25). The `game_faithful` flag (UI checkbox → sidecar)
@@ -180,5 +184,5 @@ without the checkpoint.
 - Back up or shrink the emotion checkpoint (it's the one heavy
   irreplaceable-fast artifact).
 - Strengthen the scheduler (a real learned gesture-timing model vs rules).
-- Per-emotion default style positions (e.g. sad → calmer, excited → livelier)
-  as a starting point the slider then trims.
+- Learn the per-emotion style defaults from the reference data instead of
+  hand-set values.

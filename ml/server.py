@@ -249,6 +249,20 @@ MAX_EXAGG = 2.0
 # Named presets → a style value, for the legacy motion_style string.
 STYLE_PRESETS = {"faithful": 0.0, "expressive": STYLE_EXPRESSIVE, "exaggerated": 1.0}
 
+# Per-emotion default position on the style axis: where the slider starts for
+# each emotion (the user then trims). Subdued emotions sit calmer, high-arousal
+# ones livelier — matches the measured emotion signatures (sadness least
+# mobile, anger/excitement most animated). Also the server-side fallback when
+# a client sends no explicit style.
+EMOTION_STYLE = {
+    "neutral": STYLE_EXPRESSIVE,  # 0.35
+    "calm": 0.20,
+    "sad": 0.12,
+    "happy": 0.45,
+    "excited": 0.62,
+    "angry": 0.55,
+}
+
 
 def style_blend(style):
     """Split a style value into (faithful, exaggerated) blend factors in
@@ -479,7 +493,8 @@ def create_app():
 
     @app.get("/health")
     def health():
-        return {"ok": True, "emotions": list(EMOTIONS), "base_styles": ["mocap", *GAME_BASES]}
+        return {"ok": True, "emotions": list(EMOTIONS), "base_styles": ["mocap", *GAME_BASES],
+                "emotion_styles": EMOTION_STYLE}
 
     @app.post("/animate")
     def animate(req: AnimateRequest):
@@ -512,7 +527,7 @@ def create_app():
         elif req.game_faithful:
             v = 0.0
         else:
-            v = STYLE_EXPRESSIVE
+            v = EMOTION_STYLE.get(req.emotion, STYLE_EXPRESSIVE)
         v = max(0.0, min(1.0, v))
         fa, ex = style_blend(v)
         schedule = build_schedule(words, duration, req.emotion, s, audio=audio, sr=sr,

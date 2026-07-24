@@ -76,6 +76,32 @@ export function setupUI(engine: AudioEngine, hooks: UIHooks): void {
   speakStyle.addEventListener('input', syncStyleLabel);
   syncStyleLabel();
 
+  // Per-emotion default style position: the slider snaps here when the
+  // emotion changes (the user then trims). Sourced from the sidecar, with a
+  // local fallback so it works before /health resolves.
+  const FALLBACK_EMOTION_STYLE: Record<string, number> = {
+    neutral: 0.35, calm: 0.2, sad: 0.12, happy: 0.45, excited: 0.62, angry: 0.55,
+  };
+  let emotionStyle: Record<string, number> = { ...FALLBACK_EMOTION_STYLE };
+  const applyEmotionStyle = () => {
+    const d = emotionStyle[speakEmotion.value];
+    if (d !== undefined) {
+      speakStyle.value = String(d);
+      syncStyleLabel();
+    }
+  };
+  speakEmotion.addEventListener('change', applyEmotionStyle);
+  applyEmotionStyle();
+  fetch(`${SIDECAR}/health`)
+    .then((r) => r.json())
+    .then((h) => {
+      if (h?.emotion_styles) {
+        emotionStyle = { ...FALLBACK_EMOTION_STYLE, ...h.emotion_styles };
+        applyEmotionStyle();
+      }
+    })
+    .catch(() => {});
+
   speakBtn.addEventListener('click', async () => {
     const text = speakText.value.trim();
     if (!text) return;
