@@ -105,9 +105,15 @@ FFXVI / BG3 assets were extracted) · **[ml/README.md](../ml/README.md)**
   mutes the BEAT2 additive to a whisper (0.7→0.12) and softens nods, so a
   game base's own motion carries the performance — composed hand motion
   drops ~2–3× toward the source game's calm style. It also biases the
-  additive by the base clip's own handedness, so the resting hand stays
-  resting: faithful composed motion measures L 26.3 / R 8.9 deg/s vs the
-  raw FFXVI `talk_relax` L 24.8 / R 6.1 (one-handed gesturing, not both).
+  additive by the base clip's own handedness (measured per clip), so the
+  resting hand stays resting. This reproduces each game's own gesture
+  style, validated against the raw clips:
+  - **FFXVI** (`base_ff16`, Clive): left-dominant. Composed L 26.3 / R 8.9
+    deg/s vs raw `talk_relax` L 24.8 / R 6.1 — one-handed.
+  - **BG3** (`base_bg3`): right-dominant. Composed lower-arm L 7.7 / R 17.5
+    (R 2.3× L) vs raw BG3 idle L 5.1 / R 12.0 (R 2.4× L).
+  - **FFXV** (`base_ffxv`): two-handed. Composed L 35.8 / R 42.4 —
+    ~symmetric, matching the FFXV idle, which uses both arms.
 - **All four e2e suites pass; `npm run build` clean.** (2026-07-21)
 
 ## How to run
