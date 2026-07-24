@@ -315,7 +315,8 @@ def learned_accents(audio: np.ndarray, sr: int, intensity: float):
     return accents
 
 
-def build_schedule(words, duration, emotion, intensity, audio=None, sr=16000, base_style="mocap"):
+def build_schedule(words, duration, emotion, intensity, audio=None, sr=16000,
+                   base_style="mocap", game_faithful=False):
     """Decide which prebaked clip plays when: talk loops over speech spans,
     idle over long gaps, additive accents. Accents come from the LEARNED
     scheduler (audio prosody -> nod/shake, trained on BEAT2 head motion)
@@ -323,26 +324,46 @@ def build_schedule(words, duration, emotion, intensity, audio=None, sr=16000, ba
 
     base_style selects the base layer: 'mocap' = our emotion loops; a game
     key ('bg3') = a game-authored standing idle as the base, with the
-    emotion gesture layered as a stronger additive overlay on top."""
+    emotion gesture layered as a stronger additive overlay on top.
+
+    game_faithful (only meaningful with a game base): mute the BEAT2 additive
+    to a whisper so the game's OWN baked motion carries the performance. Our
+    co-speech mocap moves the hands ~4-6x more than real game dialogue
+    (measured: BEAT2 talk ~100-146 deg/s vs FFXVI talk_relax ~6-25); at full
+    weight it overrides the game's calm style. Faithful mode keeps only a hint
+    of additive life and softens the head nods, so the composition reads as
+    the source game (base_ff16 is Clive's actual talk clip; bg3/ffxv are calm
+    idles)."""
     game_base = GAME_BASES.get(base_style)
     base_name = game_base or BASE_LOOP.get(emotion, "talk_neutral")
-    # When a game idle is the base (calm, no talk gestures of its own), the
-    # emotion's own talk motion must ride as the additive layer, not just
-    # the FFXV flourish — so overlay weight is higher.
-    overlay_weight = round((0.7 if game_base else 0.35) * intensity, 2)
+    faithful = game_faithful and game_base
+    # Nod/shake accents are softened in faithful mode (games gesture sparingly).
+    accent_scale = 0.5 if faithful else 1.0
 
     # Additive layers riding the base. On a game base, the emotion's own talk
     # loop rides additively (delta-from-its-neutral = talking arms) so the
     # game idle carries stance while our motion carries the gesture; plus a
     # lighter FFXV flourish. On a mocap base, just the FFXV flourish.
-    if game_base:
+    if faithful:
+        # Whisper of additive so lip-sync spans aren't dead-still, but the
+        # game base's own motion dominates.
+        emo_loop = BASE_LOOP.get(emotion, "talk_neutral")
+        additive = [
+            {"name": emo_loop, "weight": round(0.12 * intensity, 2), "loop": True},
+            {"name": "talk_overlay_ffxv", "weight": round(0.06 * intensity, 2), "loop": True},
+        ]
+    elif game_base:
+        # When a game idle is the base (calm, no talk gestures of its own),
+        # the emotion's own talk motion rides as the additive layer, not just
+        # the FFXV flourish — so overlay weight is higher.
+        overlay_weight = round(0.7 * intensity, 2)
         emo_loop = BASE_LOOP.get(emotion, "talk_neutral")
         additive = [
             {"name": emo_loop, "weight": overlay_weight, "loop": True},
             {"name": "talk_overlay_ffxv", "weight": round(0.25 * intensity, 2), "loop": True},
         ]
     else:
-        additive = [{"name": "talk_overlay_ffxv", "weight": overlay_weight, "loop": True}]
+        additive = [{"name": "talk_overlay_ffxv", "weight": round(0.35 * intensity, 2), "loop": True}]
 
     segs, accents = [], []
     if not words:
@@ -351,6 +372,8 @@ def build_schedule(words, duration, emotion, intensity, audio=None, sr=16000, ba
         segs.append({"name": base_name, "t0": 0.0, "t1": round(duration, 2)})
         if audio is not None:
             accents = learned_accents(audio, sr, intensity) or []
+            if accent_scale != 1.0:
+                accents = [{**a, "scale": round(a["scale"] * accent_scale, 2)} for a in accents]
         return {"base": segs, "accents": accents, "additive": additive}
 
     # Speech spans: words separated by <0.9 s belong to one span.
@@ -385,11 +408,11 @@ def build_schedule(words, duration, emotion, intensity, audio=None, sr=16000, ba
         if w.strip() in {".", "!", "?"} or token.endswith((".", "!", "?")):
             if flip:
                 accents.append({"name": "agree", "t": round(max(0.0, t0 - 0.15), 2),
-                                "scale": round(0.5 + 0.5 * intensity, 2)})
+                                "scale": round((0.5 + 0.5 * intensity) * accent_scale, 2)})
             flip = not flip
         elif token.strip('.,!?') in NEGATIVE_WORDS and emotion in ("angry", "sad"):
             accents.append({"name": "headShake", "t": round(max(0.0, t0 - 0.1), 2),
-                            "scale": round(0.4 + 0.6 * intensity, 2)})
+                            "scale": round((0.4 + 0.6 * intensity) * accent_scale, 2)})
     # Continuous additive layer: a game-derived expressive talk overlay
     # (arms/torso, delta-from-base) rides the base loop, energy-gated. This
     # is the base+additive composition — the base carries emotion-specific
@@ -424,6 +447,7 @@ def create_app():
         intensity: float = 1.0  # 0 = neutral gestures, 1 = full emotion
         raw: bool = False  # also return the raw EMAGE clip (debug/fallback)
         base_style: str = "mocap"  # 'mocap' or a game key ('bg3')
+        game_faithful: bool = False  # mute additive so a game base carries the motion
 
     @app.get("/health")
     def health():
@@ -452,7 +476,7 @@ def create_app():
         s = max(0.0, min(1.0, req.intensity))
         duration = len(audio) / sr
         schedule = build_schedule(words, duration, req.emotion, s, audio=audio, sr=sr,
-                                  base_style=req.base_style)
+                                  base_style=req.base_style, game_faithful=req.game_faithful)
         schedule["mood"] = mood * s
         out = {
             "schedule": schedule,

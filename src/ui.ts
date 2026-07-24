@@ -74,6 +74,7 @@ export function setupUI(engine: AudioEngine, hooks: UIHooks): void {
           emotion: speakEmotion.value,
           intensity: Number(speakIntensity.value),
           base_style: (document.getElementById('speak-base') as HTMLSelectElement).value,
+          game_faithful: (document.getElementById('speak-faithful') as HTMLInputElement).checked,
         }),
       });
       if (!res.ok) throw new Error(`sidecar ${res.status}: ${await res.text()}`);

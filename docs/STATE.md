@@ -97,7 +97,14 @@ FFXVI / BG3 assets were extracted) · **[ml/README.md](../ml/README.md)**
   idle stances all extracted, rest-pose-corrected (arms 71–73°), and
   selectable as base layers. Cross-engine finding: all three store
   *conversational* animation as additive-over-base — independent validation
-  of this architecture.
+  of this architecture. Verified against the raw game clips: base_ff16
+  reproduces FFXVI `talk_relax` within ~1 deg/s per joint.
+- **Game-faithful motion toggle**: our co-speech mocap moves the hands
+  ~4–6× more than real game dialogue (BEAT2 talk ~100–146 deg/s vs FFXVI
+  `talk_relax` ~6–25). The `game_faithful` flag (UI checkbox → sidecar)
+  mutes the BEAT2 additive to a whisper (0.7→0.12) and softens nods, so a
+  game base's own motion carries the performance — composed hand motion
+  drops ~2–3× toward the source game's calm style.
 - **All four e2e suites pass; `npm run build` clean.** (2026-07-21)
 
 ## How to run
@@ -155,5 +162,6 @@ without the checkpoint.
 - Back up or shrink the emotion checkpoint (it's the one heavy
   irreplaceable-fast artifact).
 - Strengthen the scheduler (a real learned gesture-timing model vs rules).
-- A "game-feel" style knob (scale amplitude/velocity toward the exaggerated
-  game look) — the reference data for it is now extracted.
+- A "game-feel" style knob in the *other* direction (scale amplitude toward
+  an exaggerated game look) — complements the game-faithful (calm) toggle
+  that now exists.
