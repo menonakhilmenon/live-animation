@@ -104,7 +104,10 @@ FFXVI / BG3 assets were extracted) · **[ml/README.md](../ml/README.md)**
   `talk_relax` ~6–25). The `game_faithful` flag (UI checkbox → sidecar)
   mutes the BEAT2 additive to a whisper (0.7→0.12) and softens nods, so a
   game base's own motion carries the performance — composed hand motion
-  drops ~2–3× toward the source game's calm style.
+  drops ~2–3× toward the source game's calm style. It also biases the
+  additive by the base clip's own handedness, so the resting hand stays
+  resting: faithful composed motion measures L 26.3 / R 8.9 deg/s vs the
+  raw FFXVI `talk_relax` L 24.8 / R 6.1 (one-handed gesturing, not both).
 - **All four e2e suites pass; `npm run build` clean.** (2026-07-21)
 
 ## How to run

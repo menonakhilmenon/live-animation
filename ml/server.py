@@ -478,6 +478,9 @@ def create_app():
         schedule = build_schedule(words, duration, req.emotion, s, audio=audio, sr=sr,
                                   base_style=req.base_style, game_faithful=req.game_faithful)
         schedule["mood"] = mood * s
+        # In game-faithful mode, let the additive follow the base clip's own
+        # handedness so the resting hand stays resting (matches game dialogue).
+        schedule["matchHandedness"] = bool(req.game_faithful and req.base_style in GAME_BASES)
         out = {
             "schedule": schedule,
             "audioB64": wav_b64(audio, sr),

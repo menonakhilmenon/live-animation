@@ -26,6 +26,14 @@ export interface GestureSchedule {
    * additive-over-base layers, and this plays them on any base stance. */
   additive?: { name: string; weight?: number; loop?: boolean }[];
   mood?: number;
+  /**
+   * Bias the additive layer's per-arm strength by the base clip's own
+   * handedness, so the additive rides the arm the base is already gesturing
+   * with and lets the other rest. Set for game-faithful playback: real game
+   * dialogue gestures with one hand (FFXVI's Clive: left ~25°/s, right ~6),
+   * and a symmetric co-speech additive would otherwise wake the resting arm.
+   */
+  matchHandedness?: boolean;
 }
 
 /** Crossfade length between base segments and accent fade, seconds. */
@@ -56,6 +64,10 @@ const GAIN_WEIGHT: Partial<Record<JointName, number>> = {
   spine: 0.45, chest: 0.45, neck: 0.3, head: 0.3, hips: 0.45,
 };
 const GAIN_MIN = 0.25;
+
+/** Arm joints per side, for handedness-biased additive (see matchHandedness). */
+const LEFT_ARM = new Set<string>(['leftShoulder', 'leftUpperArm', 'leftLowerArm', 'leftHand']);
+const RIGHT_ARM = new Set<string>(['rightShoulder', 'rightUpperArm', 'rightLowerArm', 'rightHand']);
 
 const qA = new THREE.Quaternion();
 const qB = new THREE.Quaternion();
@@ -108,9 +120,45 @@ export class SchedulePlayer {
   private startedAt = -1;
   /** Smoothed speech-activity gain (fast attack, slow release). */
   private gain = GAIN_MIN;
+  /** Per-base-clip {left,right} arm additive multipliers (see matchHandedness). */
+  private handedness = new Map<string, { left: number; right: number }>();
 
   setLibrary(clips: Record<string, MotionClip>): void {
     this.library = { ...this.library, ...clips };
+  }
+
+  /**
+   * How much of the additive each arm should receive, from the base clip's
+   * own per-arm motion. The busier arm gets 1.0; the quieter arm is squashed
+   * (ratio², floored) so a symmetric co-speech overlay doesn't wake a hand
+   * the base is deliberately resting. Cached per clip name.
+   */
+  private armHandedness(name: string, clip: MotionClip): { left: number; right: number } {
+    const cached = this.handedness.get(name);
+    if (cached) return cached;
+    const speed = (joints: string[]): number => {
+      let sum = 0;
+      let n = 0;
+      for (const jn of joints) {
+        const idx = clip.joints.indexOf(jn as JointName);
+        if (idx < 0) continue;
+        for (let f = 1; f < clip.rotations.length; f++) {
+          const a = clip.rotations[f - 1][idx];
+          const b = clip.rotations[f][idx];
+          const d = Math.min(1, Math.abs(a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3]));
+          sum += 2 * Math.acos(d);
+          n++;
+        }
+      }
+      return n ? sum / n : 0;
+    };
+    const l = speed(['leftHand', 'leftLowerArm']);
+    const r = speed(['rightHand', 'rightLowerArm']);
+    const m = Math.max(l, r, 1e-6);
+    const shape = (x: number): number => Math.max(0.12, (x / m) ** 2);
+    const res = { left: shape(l), right: shape(r) };
+    this.handedness.set(name, res);
+    return res;
   }
 
   get libraryNames(): string[] {
@@ -272,6 +320,8 @@ export class SchedulePlayer {
     // space to whatever the base already posed, scaled by weight × energy
     // gain. This is the base+additive composition: a subtle full-body talk
     // layer (ours or a game's additive clip) rides any base stance.
+    // Handedness bias from the CURRENT base segment's clip (game-faithful).
+    const hand = sched.matchHandedness ? this.armHandedness(seg.name, clip) : null;
     for (const layer of sched.additive ?? []) {
       const lclip = this.library[layer.name];
       if (!lclip) continue;
@@ -280,7 +330,12 @@ export class SchedulePlayer {
       const baseWeight = (layer.weight ?? 1) * w;
       for (const [i, name] of lclip.joints.entries()) {
         const gw = GAIN_WEIGHT[name as JointName] ?? 0.4;
-        const env = baseWeight * (1 - gw * (1 - this.gain));
+        let env = baseWeight * (1 - gw * (1 - this.gain));
+        if (hand) {
+          // Ride the arm the base gestures with; let the resting arm rest.
+          if (LEFT_ARM.has(name)) env *= hand.left;
+          else if (RIGHT_ARM.has(name)) env *= hand.right;
+        }
         if (env <= 0.01) continue;
         const node = rig.joints[name as JointName];
         if (!node) continue;
