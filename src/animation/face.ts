@@ -6,9 +6,8 @@ import { ema } from '../audio/features';
  * Drives facial expressions from audio features:
  *  - lip sync in speech mode: mouth opening from level, viseme chosen by
  *    spectral brightness (dark → ou, mid → aa, bright → ih)
- *  - subtle "singing along" mouth in loud music sections
  *  - blinking on a natural randomized schedule
- *  - mood: happier as musical energy rises, relaxed in silence
+ *  - mood: happier while speaking, relaxed in silence
  */
 /** One timed lip-sync event from the TTS: [t0, t1, viseme, weight]. */
 export type VisemeEvent = [number, number, 'aa' | 'ih' | 'ou' | 'sil', number];
@@ -55,9 +54,6 @@ export class FaceAnimator {
     let open = 0;
     if (f.mode === 'speech') {
       open = Math.min(1, Math.pow(f.rms * 4.5, 0.85));
-    } else if (f.mode === 'music') {
-      // Quiet "singing along" only in energetic sections.
-      open = Math.min(0.35, f.mid * 0.5 * f.section);
     }
     let ihShare: number, ouShare: number, aaShare: number;
     const ev = this.track ? this.eventAt(this.track.clock()) : null;
@@ -101,8 +97,7 @@ export class FaceAnimator {
     this.face.setBlink(blink);
 
     // --- Mood ---
-    const base =
-      f.mode === 'music' ? 0.15 + f.section * 0.5 : f.mode === 'speech' ? 0.1 : -0.3;
+    const base = f.mode === 'speech' ? 0.1 : -0.3;
     const target = Math.max(-1, Math.min(1, base + this.moodBias));
     this.mood = ema(this.mood, target, 1.2, dt);
     this.face.setMood(this.mood);

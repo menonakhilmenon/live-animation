@@ -10,8 +10,8 @@ An audio-driven humanoid animation system that grew into a **generative
 animation suite**. Two ways in:
 
 - **Reactive** (browser-only): load an audio file or mic → a character
-  dances to music, gestures and lip-syncs to speech, idles in silence.
-  Everything derived from the audio signal, no pre-baked clips.
+  gestures and lip-syncs to speech, idles in silence. Everything derived
+  from the audio signal, no pre-baked clips.
 - **Generative** (needs the Python sidecar): type text, pick an emotion →
   local TTS speaks it and a model generates matching full-body gesture
   animation, played back on the avatar in sync with lip-sync and mood.
@@ -60,12 +60,12 @@ what makes any source (our model, or FFXV/FFXVI/BG3 mocap) play on any rig
 
 | Path | What |
 |---|---|
-| `src/audio/` | Offline analysis (beat grid, sections, speech/music/silence) + causal mic path |
+| `src/audio/` | Offline analysis (loudness, brightness, onset envelope, speech/silence) + causal mic path |
 | `src/rig/` | `HumanoidRig` abstraction; capsule / Mixamo (`loader.ts`) / VRM (`vrm.ts`); probed bone axes |
 | `src/animation/clip.ts` | Canonical `MotionClip` format + `ClipPlayer` (single-clip playback, retargeting) |
 | `src/animation/schedule.ts` | `SchedulePlayer` — base + additive + accents composition (the core new engine) |
 | `src/animation/library.ts` | Clip conversion: GLTF/GLB, and `convertNamedSkeletonAnimations` + per-game bone maps |
-| `src/animation/animator.ts` | Behavior dispatch (dance/speech/idle), schedule vs clip vs procedural |
+| `src/animation/animator.ts` | Behavior dispatch (speech/idle), schedule vs clip vs procedural |
 | `ml/server.py` | FastAPI sidecar: TTS + EMAGE + `build_schedule` (the "decide" step) |
 | `ml/generate.py` | audio → EMAGE → MotionClip; seed-pose + VQ sampling live here |
 | `ml/train_emotion.py` | Emotion fine-tune of EMAGE on BEAT2 |

@@ -32,8 +32,6 @@
       .meter { height: 6px; background: #1a2330; border-radius: 3px; overflow: hidden; }
       .meter > div { height: 100%; width: 0%; border-radius: 3px; }
       #m-rms > div { background: #6fc2ff; }
-      #m-bass > div { background: #ff9d6f; }
-      #m-beat > div { background: #b78cff; }
       label.meter-label { font-size: 11px; color: #8fa1b5; }
     </style>
   </head>
@@ -84,11 +82,6 @@
       <label class="meter-label" id="speak-status"></label>
       <label class="meter-label">level</label>
       <div class="meter" id="m-rms"><div></div></div>
-      <label class="meter-label">bass</label>
-      <div class="meter" id="m-bass"><div></div></div>
-      <label class="meter-label">beat</label>
-      <div class="meter" id="m-beat"><div></div></div>
-      <label class="meter-label" id="bpm-label">tempo: —</label>
       <label class="meter-label" id="analysis-label"></label>
     </div>
     <script type="module" src="/src/main.ts"></script>

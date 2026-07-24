@@ -1,13 +1,7 @@
 // Generates test audio into e2e/.artifacts/:
 //
-// test.wav — a 16 s structured "song" at exactly 120 BPM:
-//   kicks every 0.5 s; accented downbeat (louder kick + crash) every 2 s;
-//   quiet first 6 s (verse) then full-level 6–16 s, entered abruptly (drop).
-//   Ground truth for beat-grid, downbeat, section, and drop assertions.
-//
 // speech.wav — 8 s of speech-like audio: harmonic voiced bursts at jittered
-//   syllable rate with pauses; no periodic beat. Ground truth for the
-//   music/speech classifier.
+//   syllable rate with pauses. Ground truth for the speech classifier.
 const fs = require('fs');
 const path = require('path');
 const outDir = path.join(__dirname, '.artifacts');
@@ -35,31 +29,6 @@ function writeWav(name, samples) {
   header.writeUInt32LE(pcm.length, 40);
   fs.writeFileSync(path.join(outDir, name), Buffer.concat([header, pcm]));
   console.log('WROTE', path.join(outDir, name));
-}
-
-// --- test.wav: structured 120 BPM song ---
-{
-  const dur = 16;
-  const n = sr * dur;
-  const samples = new Float32Array(n);
-  const beat = 0.5; // 120 BPM
-  for (let i = 0; i < n; i++) {
-    const t = i / sr;
-    const sectionAmp = t < 6 ? 0.32 : 1.0; // verse → drop at exactly 6 s
-    const beatT = t % beat;
-    const downbeat = Math.floor(t / beat) % 4 === 0;
-    // Kick: 60 Hz burst, accented on downbeats.
-    let s = Math.sin(2 * Math.PI * 60 * beatT) * Math.exp(-beatT * 18) * (downbeat ? 1.2 : 0.85);
-    // Crash noise on downbeats only — a clear bar marker.
-    if (downbeat) s += (Math.random() * 2 - 1) * Math.exp(-beatT * 25) * 0.3;
-    // Hi-hat on off-beats.
-    const offT = (t + beat / 2) % beat;
-    s += (Math.random() * 2 - 1) * Math.exp(-offT * 60) * 0.15;
-    // Pad.
-    s += Math.sin(2 * Math.PI * 220 * t) * 0.05 + Math.sin(2 * Math.PI * 440 * t) * 0.04;
-    samples[i] = s * sectionAmp;
-  }
-  writeWav('test.wav', samples);
 }
 
 // --- speech.wav: syllabic voiced bursts, aperiodic ---
