@@ -77,10 +77,12 @@
         <input id="speak-intensity" type="range" min="0" max="1" step="0.05" value="1" style="flex:1" />
       </div>
       <div class="row">
-        <label class="meter-label" for="speak-faithful" style="display:flex;align-items:center;gap:6px">
-          <input id="speak-faithful" type="checkbox" />
-          game-faithful motion (calm, matches source)
-        </label>
+        <label class="meter-label" for="speak-style">style</label>
+        <select id="speak-style" style="flex:1">
+          <option value="expressive">expressive (default)</option>
+          <option value="faithful">game-faithful (calm, matches source)</option>
+          <option value="exaggerated">game-feel (exaggerated)</option>
+        </select>
       </div>
       <label class="meter-label" id="speak-status"></label>
       <label class="meter-label">level</label>

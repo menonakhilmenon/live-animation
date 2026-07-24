@@ -240,6 +240,9 @@ NEGATIVE_WORDS = {"no", "not", "never", "nothing", "wrong", "unacceptable", "wor
 # standing idle (Larian, extracted) with the emotion gestures as an additive
 # overlay — game reference as the base layer.
 GAME_BASES = {"bg3": "base_bg3", "ff16": "base_ff16", "ffxv": "base_ffxv"}
+# Gesture-angle multiplier for the 'exaggerated' game-feel style (applied in
+# the player to additive + accent deltas; posture/base untouched).
+EXAGGERATION = 1.6
 ACCENT_CKPT = os.path.join(os.path.dirname(__file__), "checkpoints", "scheduler")
 
 
@@ -316,7 +319,7 @@ def learned_accents(audio: np.ndarray, sr: int, intensity: float):
 
 
 def build_schedule(words, duration, emotion, intensity, audio=None, sr=16000,
-                   base_style="mocap", game_faithful=False):
+                   base_style="mocap", motion_style="expressive"):
     """Decide which prebaked clip plays when: talk loops over speech spans,
     idle over long gaps, additive accents. Accents come from the LEARNED
     scheduler (audio prosody -> nod/shake, trained on BEAT2 head motion)
@@ -326,19 +329,25 @@ def build_schedule(words, duration, emotion, intensity, audio=None, sr=16000,
     key ('bg3') = a game-authored standing idle as the base, with the
     emotion gesture layered as a stronger additive overlay on top.
 
-    game_faithful (only meaningful with a game base): mute the BEAT2 additive
-    to a whisper so the game's OWN baked motion carries the performance. Our
-    co-speech mocap moves the hands ~4-6x more than real game dialogue
-    (measured: BEAT2 talk ~100-146 deg/s vs FFXVI talk_relax ~6-25); at full
-    weight it overrides the game's calm style. Faithful mode keeps only a hint
-    of additive life and softens the head nods, so the composition reads as
-    the source game (base_ff16 is Clive's actual talk clip; bg3/ffxv are calm
-    idles)."""
+    motion_style scales the expressive layer between two extremes:
+    - 'faithful' (only with a game base): mute the BEAT2 additive to a
+      whisper so the game's OWN baked motion carries the performance. Our
+      co-speech mocap moves the hands ~4-6x more than real game dialogue
+      (BEAT2 talk ~100-146 deg/s vs FFXVI talk_relax ~6-25); at full weight
+      it overrides the game's calm style. Faithful keeps a hint of additive
+      and softens nods, so it reads as the source game.
+    - 'expressive' (default): our natural co-speech gesture level.
+    - 'exaggerated': push toward a cinematic 'game-feel' — heavier additive
+      weights here, plus a schedule-level `exaggeration` angle-scale applied
+      in the player, for bigger sweeps and snappier nods."""
     game_base = GAME_BASES.get(base_style)
     base_name = game_base or BASE_LOOP.get(emotion, "talk_neutral")
-    faithful = game_faithful and game_base
-    # Nod/shake accents are softened in faithful mode (games gesture sparingly).
+    faithful = motion_style == "faithful" and bool(game_base)
+    exaggerated = motion_style == "exaggerated"
+    # Nod/shake accents: softened when faithful, unchanged otherwise (the
+    # player's angle-scale handles nod amplitude in exaggerated mode).
     accent_scale = 0.5 if faithful else 1.0
+    emo_loop = BASE_LOOP.get(emotion, "talk_neutral")
 
     # Additive layers riding the base. On a game base, the emotion's own talk
     # loop rides additively (delta-from-its-neutral = talking arms) so the
@@ -347,23 +356,20 @@ def build_schedule(words, duration, emotion, intensity, audio=None, sr=16000,
     if faithful:
         # Whisper of additive so lip-sync spans aren't dead-still, but the
         # game base's own motion dominates.
-        emo_loop = BASE_LOOP.get(emotion, "talk_neutral")
         additive = [
             {"name": emo_loop, "weight": round(0.12 * intensity, 2), "loop": True},
             {"name": "talk_overlay_ffxv", "weight": round(0.06 * intensity, 2), "loop": True},
         ]
     elif game_base:
-        # When a game idle is the base (calm, no talk gestures of its own),
-        # the emotion's own talk motion rides as the additive layer, not just
-        # the FFXV flourish — so overlay weight is higher.
-        overlay_weight = round(0.7 * intensity, 2)
-        emo_loop = BASE_LOOP.get(emotion, "talk_neutral")
+        # Emotion talk loop as the additive over the game idle; heavier when
+        # exaggerated so there's more gesture for the angle-scale to amplify.
         additive = [
-            {"name": emo_loop, "weight": overlay_weight, "loop": True},
-            {"name": "talk_overlay_ffxv", "weight": round(0.25 * intensity, 2), "loop": True},
+            {"name": emo_loop, "weight": round((0.9 if exaggerated else 0.7) * intensity, 2), "loop": True},
+            {"name": "talk_overlay_ffxv", "weight": round((0.4 if exaggerated else 0.25) * intensity, 2), "loop": True},
         ]
     else:
-        additive = [{"name": "talk_overlay_ffxv", "weight": round(0.35 * intensity, 2), "loop": True}]
+        additive = [{"name": "talk_overlay_ffxv",
+                     "weight": round((0.5 if exaggerated else 0.35) * intensity, 2), "loop": True}]
 
     segs, accents = [], []
     if not words:
@@ -447,7 +453,10 @@ def create_app():
         intensity: float = 1.0  # 0 = neutral gestures, 1 = full emotion
         raw: bool = False  # also return the raw EMAGE clip (debug/fallback)
         base_style: str = "mocap"  # 'mocap' or a game key ('bg3')
-        game_faithful: bool = False  # mute additive so a game base carries the motion
+        # 'expressive' (default) | 'faithful' (calm, matches a game base) |
+        # 'exaggerated' (cinematic game-feel). game_faithful kept for back-compat.
+        motion_style: str = "expressive"
+        game_faithful: bool = False
 
     @app.get("/health")
     def health():
@@ -475,12 +484,17 @@ def create_app():
 
         s = max(0.0, min(1.0, req.intensity))
         duration = len(audio) / sr
+        style = req.motion_style
+        if req.game_faithful and style == "expressive":
+            style = "faithful"  # back-compat with the old boolean
         schedule = build_schedule(words, duration, req.emotion, s, audio=audio, sr=sr,
-                                  base_style=req.base_style, game_faithful=req.game_faithful)
+                                  base_style=req.base_style, motion_style=style)
         schedule["mood"] = mood * s
         # In game-faithful mode, let the additive follow the base clip's own
         # handedness so the resting hand stays resting (matches game dialogue).
-        schedule["matchHandedness"] = bool(req.game_faithful and req.base_style in GAME_BASES)
+        schedule["matchHandedness"] = bool(style == "faithful" and req.base_style in GAME_BASES)
+        # In exaggerated mode, the player scales gesture angles up (game-feel).
+        schedule["exaggeration"] = EXAGGERATION if style == "exaggerated" else 1.0
         out = {
             "schedule": schedule,
             "audioB64": wav_b64(audio, sr),

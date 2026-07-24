@@ -34,6 +34,13 @@ export interface GestureSchedule {
    * and a symmetric co-speech additive would otherwise wake the resting arm.
    */
   matchHandedness?: boolean;
+  /**
+   * Gesture-amplitude multiplier for the expressive layers (additive +
+   * accents). 1 = as authored; >1 pushes toward an exaggerated cinematic
+   * "game-feel" (bigger sweeps, snappier nods) by scaling each gesture's
+   * rotation angle. Posture (the base) is left alone so it never distorts.
+   */
+  exaggeration?: number;
 }
 
 /** Crossfade length between base segments and accent fade, seconds. */
@@ -78,6 +85,23 @@ const vTmp = new THREE.Vector3();
 function smoothstep(x: number): number {
   const t = Math.min(1, Math.max(0, x));
   return t * t * (3 - 2 * t);
+}
+
+/**
+ * Scale a unit quaternion's rotation ANGLE about its own axis by `f`, in
+ * place, keeping the shortest arc. Used to exaggerate gesture amplitude
+ * (game-feel). The resulting angle is capped just under 180° so a large
+ * gesture can't wrap or flip.
+ */
+function scaleAngle(q: THREE.Quaternion, f: number): void {
+  const w = Math.min(1, Math.max(-1, q.w));
+  const vlen = Math.hypot(q.x, q.y, q.z);
+  const half = Math.acos(Math.abs(w)); // half-angle, shortest arc
+  if (half < 1e-5 || vlen < 1e-9) return; // ~identity: nothing to scale
+  const sign = w < 0 ? -1 : 1; // fold to w>=0 so axis matches |w|
+  const nh = Math.min(half * f, Math.PI * 0.49); // cap → angle < ~176°
+  const s = Math.sin(nh) / vlen;
+  q.set(sign * q.x * s, sign * q.y * s, sign * q.z * s, Math.cos(nh));
 }
 
 /** Sample a clip's stored world-delta for one joint index at local time. */
@@ -322,6 +346,7 @@ export class SchedulePlayer {
     // layer (ours or a game's additive clip) rides any base stance.
     // Handedness bias from the CURRENT base segment's clip (game-faithful).
     const hand = sched.matchHandedness ? this.armHandedness(seg.name, clip) : null;
+    const exaggeration = sched.exaggeration ?? 1;
     for (const layer of sched.additive ?? []) {
       const lclip = this.library[layer.name];
       if (!lclip) continue;
@@ -343,6 +368,7 @@ export class SchedulePlayer {
         const r0 = lclip.rotations[0][i];
         qRef.set(r0[0], r0[1], r0[2], r0[3]).invert();
         qA.multiply(qRef); // delta from the layer's first frame
+        if (exaggeration !== 1) scaleAngle(qA, exaggeration);
         qParent.identity().slerp(qA, env);
         node.getWorldQuaternion(qB);
         qB.premultiply(qParent); // additive, world space
@@ -374,6 +400,7 @@ export class SchedulePlayer {
         const r0 = aclip.rotations[0][i];
         qRef.set(r0[0], r0[1], r0[2], r0[3]).invert();
         qA.multiply(qRef); // delta relative to the accent's first frame
+        if (exaggeration !== 1) scaleAngle(qA, exaggeration);
         qParent.identity().slerp(qA, env * jointWeight); // scaled additive
         node.getWorldQuaternion(qB);
         qB.premultiply(qParent); // additive in world space
