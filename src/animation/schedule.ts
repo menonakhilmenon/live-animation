@@ -35,6 +35,13 @@ export interface GestureSchedule {
    */
   matchHandedness?: boolean;
   /**
+   * How strongly the additive follows the base clip's own handedness, 0..1
+   * (continuous; supersedes the boolean matchHandedness). 1 fully suppresses
+   * the resting arm's additive (calm/faithful end), 0 leaves both arms
+   * symmetric (expressive/game-feel).
+   */
+  handedness?: number;
+  /**
    * Gesture-amplitude multiplier for the expressive layers (additive +
    * accents). 1 = as authored; >1 pushes toward an exaggerated cinematic
    * "game-feel" (bigger sweeps, snappier nods) by scaling each gesture's
@@ -345,7 +352,9 @@ export class SchedulePlayer {
     // gain. This is the base+additive composition: a subtle full-body talk
     // layer (ours or a game's additive clip) rides any base stance.
     // Handedness bias from the CURRENT base segment's clip (game-faithful).
-    const hand = sched.matchHandedness ? this.armHandedness(seg.name, clip) : null;
+    // Continuous 0..1; back-compat with the old boolean flag.
+    const handAmt = sched.handedness ?? (sched.matchHandedness ? 1 : 0);
+    const hand = handAmt > 0 ? this.armHandedness(seg.name, clip) : null;
     const exaggeration = sched.exaggeration ?? 1;
     for (const layer of sched.additive ?? []) {
       const lclip = this.library[layer.name];
@@ -358,8 +367,9 @@ export class SchedulePlayer {
         let env = baseWeight * (1 - gw * (1 - this.gain));
         if (hand) {
           // Ride the arm the base gestures with; let the resting arm rest.
-          if (LEFT_ARM.has(name)) env *= hand.left;
-          else if (RIGHT_ARM.has(name)) env *= hand.right;
+          // Blend the per-arm gain toward 1 by handAmt (continuous).
+          const g = LEFT_ARM.has(name) ? hand.left : RIGHT_ARM.has(name) ? hand.right : 1;
+          if (g !== 1) env *= 1 + (g - 1) * handAmt;
         }
         if (env <= 0.01) continue;
         const node = rig.joints[name as JointName];

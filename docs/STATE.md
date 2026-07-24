@@ -99,13 +99,15 @@ FFXVI / BG3 assets were extracted) · **[ml/README.md](../ml/README.md)**
   *conversational* animation as additive-over-base — independent validation
   of this architecture. Verified against the raw game clips: base_ff16
   reproduces FFXVI `talk_relax` within ~1 deg/s per joint.
-- **Motion-style knob** (`expressive` ↔ `faithful` ↔ `game-feel`): a
-  per-utterance select scaling the expressive layer between two extremes.
-  Measured composed hand motion on the FFXVI base: faithful ~25/9, expressive
-  ~99/128, exaggerated ~225/248 deg/s — roughly 2× per step. `game-feel`
-  scales each additive/accent gesture's rotation ANGLE (base/posture left
-  untouched, capped <176° so nothing wraps) plus heavier additive weights,
-  for big cinematic sweeps; `faithful` is the calm end below.
+- **Motion-style knob** — a single continuous slider (0..1) spanning
+  game-faithful (calm) ↔ expressive ↔ game-feel (cinematic). It blends three
+  things at once: additive weight (0.12→0.7→0.9 on a game base), handedness
+  match (1→0, so the calm end rests one hand like the game and the loud end
+  is symmetric), and a gesture-angle exaggeration (1→2× at the player, base
+  posture untouched, capped <176° so nothing wraps). Measured composed hand
+  motion on the FFXVI base sweeps smoothly and monotonically: 24/10 (0.0) →
+  88/126 (0.35) → 151/195 (0.6) → 263/305 (1.0) deg/s. The sidecar still
+  accepts the legacy `motion_style` preset and `game_faithful` bool.
 - **Game-faithful motion**: our co-speech mocap moves the hands
   ~4–6× more than real game dialogue (BEAT2 talk ~100–146 deg/s vs FFXVI
   `talk_relax` ~6–25). The `game_faithful` flag (UI checkbox → sidecar)
@@ -178,6 +180,5 @@ without the checkpoint.
 - Back up or shrink the emotion checkpoint (it's the one heavy
   irreplaceable-fast artifact).
 - Strengthen the scheduler (a real learned gesture-timing model vs rules).
-- A continuous style slider (instead of the 3-way select) if finer control
-  between calm and exaggerated is wanted — the player already takes an
-  arbitrary `exaggeration` factor and additive weights.
+- Per-emotion default style positions (e.g. sad → calmer, excited → livelier)
+  as a starting point the slider then trims.

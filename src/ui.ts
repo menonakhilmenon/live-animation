@@ -58,7 +58,23 @@ export function setupUI(engine: AudioEngine, hooks: UIHooks): void {
   const speakText = document.getElementById('speak-text') as HTMLTextAreaElement;
   const speakEmotion = document.getElementById('speak-emotion') as HTMLSelectElement;
   const speakIntensity = document.getElementById('speak-intensity') as HTMLInputElement;
+  const speakStyle = document.getElementById('speak-style') as HTMLInputElement;
+  const speakStyleLabel = document.getElementById('speak-style-label');
   const speakStatus = document.getElementById('speak-status')!;
+
+  // Live readout for the continuous style slider (calm ↔ game-feel).
+  const describeStyle = (v: number): string => {
+    if (v <= 0.1) return 'game-faithful (calm)';
+    if (v < 0.3) return 'toward faithful';
+    if (v <= 0.4) return 'expressive';
+    const factor = (1 + ((v - 0.35) / 0.65)).toFixed(2);
+    return `game-feel ×${factor}`;
+  };
+  const syncStyleLabel = () => {
+    if (speakStyleLabel) speakStyleLabel.textContent = describeStyle(Number(speakStyle.value));
+  };
+  speakStyle.addEventListener('input', syncStyleLabel);
+  syncStyleLabel();
 
   speakBtn.addEventListener('click', async () => {
     const text = speakText.value.trim();
@@ -74,7 +90,7 @@ export function setupUI(engine: AudioEngine, hooks: UIHooks): void {
           emotion: speakEmotion.value,
           intensity: Number(speakIntensity.value),
           base_style: (document.getElementById('speak-base') as HTMLSelectElement).value,
-          motion_style: (document.getElementById('speak-style') as HTMLSelectElement).value,
+          style: Number(speakStyle.value),
         }),
       });
       if (!res.ok) throw new Error(`sidecar ${res.status}: ${await res.text()}`);
