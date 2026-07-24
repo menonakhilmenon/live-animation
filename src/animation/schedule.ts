@@ -83,6 +83,30 @@ const GAIN_MIN = 0.25;
 const LEFT_ARM = new Set<string>(['leftShoulder', 'leftUpperArm', 'leftLowerArm', 'leftHand']);
 const RIGHT_ARM = new Set<string>(['rightShoulder', 'rightUpperArm', 'rightLowerArm', 'rightHand']);
 
+/**
+ * Residual arm additive between emphasis strokes: the hands keep a whisper of
+ * life but otherwise REST rather than sway. The rest of the arm envelope is
+ * driven by speech emphasis, so gesture strokes land on stressed syllables
+ * and settle in the gaps — reading as talking, not dancing to a loop's beat.
+ */
+const ARM_REST = 0.06;
+/** Additive activity for hips/legs during speech: planted, barely shifting. */
+const LIMB_ACT = 0.06;
+
+/**
+ * Per-joint additive strength, split by body region so gesture carries intent:
+ * - arms  → `armAct`: a voice-activity base (rests in pauses) plus an
+ *           emphasis boost, so gestures cluster on speech and the hands
+ *           settle at phrase gaps instead of swaying continuously
+ * - torso → gentle steady sway from smoothed voice activity (`gain`)
+ * - hips/legs → nearly planted (a speaker's lower body doesn't gesture)
+ */
+function additiveActivity(name: string, armAct: number, gain: number): number {
+  if (LEFT_ARM.has(name) || RIGHT_ARM.has(name)) return armAct;
+  if (name === 'hips' || name.endsWith('Leg') || name.endsWith('Foot')) return LIMB_ACT;
+  return 0.28 + 0.32 * gain;
+}
+
 const qA = new THREE.Quaternion();
 const qB = new THREE.Quaternion();
 const qRef = new THREE.Quaternion();
@@ -151,6 +175,9 @@ export class SchedulePlayer {
   private startedAt = -1;
   /** Smoothed speech-activity gain (fast attack, slow release). */
   private gain = GAIN_MIN;
+  /** Emphasis-stroke envelope: jumps on stressed-syllable onsets, decays to
+   * ~0 so the arms gesture on emphasis and rest between (intent, not sway). */
+  private stroke = 0;
   /** Per-base-clip {left,right} arm additive multipliers (see matchHandedness). */
   private handedness = new Map<string, { left: number; right: number }>();
 
@@ -244,6 +271,16 @@ export class SchedulePlayer {
       : 1;
     const tau = target > this.gain ? 0.09 : 0.5;
     this.gain += (target - this.gain) * Math.min(1, dtWall / tau);
+
+    // Emphasis-stroke envelope: onset (spectral-flux novelty) spikes on
+    // stressed syllables. Threshold so only stronger onsets count, and use a
+    // gentle attack so the arm ramps into a stroke instead of snapping the
+    // loop (which spikes velocity). ~0.4 s decay. This BOOSTS arm gesture on
+    // emphasis rather than hard-gating it, so beats land on stress.
+    const emph = features ? smoothstep((features.onset - 0.2) / 0.5) : 0;
+    const sTau = emph > this.stroke ? 0.12 : 0.4;
+    this.stroke += (emph - this.stroke) * Math.min(1, dtWall / sTau);
+
     if (this.startedAt < 0) this.startedAt = t;
     const wIn = smoothstep((t - this.startedAt) / FADE);
     const lastBase = sched.base[sched.base.length - 1];
@@ -341,9 +378,11 @@ export class SchedulePlayer {
       hips.parent.getWorldQuaternion(qParent);
       vTmp.applyQuaternion(qParent.invert());
     }
+    // Hip bob is heavily damped during speech: a talking person's pelvis
+    // barely moves, and a looping weight-shift is what most reads as dancing.
     hips.position.addScaledVector(
       vTmp,
-      rig.positionScale * w * (1 - (GAIN_WEIGHT.hips ?? 0.45) * (1 - this.gain)),
+      rig.positionScale * w * 0.3 * (1 - (GAIN_WEIGHT.hips ?? 0.45) * (1 - this.gain)),
     );
 
     // --- Additive overlays: continuous expressive layers on the base ---
@@ -356,6 +395,11 @@ export class SchedulePlayer {
     const handAmt = sched.handedness ?? (sched.matchHandedness ? 1 : 0);
     const hand = handAmt > 0 ? this.armHandedness(seg.name, clip) : null;
     const exaggeration = sched.exaggeration ?? 1;
+    // Arm additive strength: a voice-activity base that falls to ~0 in
+    // pauses (so the hands settle between phrases, unlike the GAIN_MIN floor
+    // the torso keeps) plus a bounded emphasis boost from `stroke`.
+    const voice = features ? smoothstep((features.rms - 0.02) / 0.12) : 1;
+    const armAct = ARM_REST + (1 - ARM_REST) * Math.min(1, 0.55 * voice + 0.5 * this.stroke);
     for (const layer of sched.additive ?? []) {
       const lclip = this.library[layer.name];
       if (!lclip) continue;
@@ -363,8 +407,9 @@ export class SchedulePlayer {
       const lt = layer.loop === false ? Math.min(t, ldur - 1e-3) : t % ldur;
       const baseWeight = (layer.weight ?? 1) * w;
       for (const [i, name] of lclip.joints.entries()) {
-        const gw = GAIN_WEIGHT[name as JointName] ?? 0.4;
-        let env = baseWeight * (1 - gw * (1 - this.gain));
+        // Region-gated: arms cluster on speech and rest in gaps, torso
+        // sways gently, hips/legs stay planted.
+        let env = baseWeight * additiveActivity(name, armAct, this.gain);
         if (hand) {
           // Ride the arm the base gestures with; let the resting arm rest.
           // Blend the per-arm gain toward 1 by handAmt (continuous).
