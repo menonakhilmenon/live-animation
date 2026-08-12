@@ -137,6 +137,36 @@ check("metrics finite; self keyframe error is zero",
       all(np.isfinite(v) for v in vals.values()) and vals["kf"] < 1e-6,
       ", ".join(f"{k}={v:.4g}" for k, v in vals.items()))
 
+# --- 8. joint-restricted perturbation stays inside its subtree ------------
+for group in ("arms", "legs", "upper", "lower"):
+    js = kfnoise.JOINT_GROUPS[group]
+    moved = kfnoise.moved_joints(js)
+    still = [j for j in range(kfnoise.NJOINTS) if j not in moved]
+    g = torch.Generator().manual_seed(11)
+    p = kfnoise.perturb_motion(m, KF, 30, skel, g, joints=js)
+    d = (kfnoise.joint_positions(p) - kfnoise.joint_positions(p0)).norm(dim=-1)
+    check(f"joints={group}: {len(still)} unselected joints exactly unmoved",
+          d[:, still].max().item() < 1e-5 and d[KF][:, moved].mean().item() > 1e-3,
+          f"spared max {d[:, still].max().item():.2e} m, "
+          f"hit mean {d[KF][:, moved].mean().item() * 1000:.1f} mm")
+
+# arms and legs are disjoint subtrees, so their damage must not overlap
+check("arms and legs move disjoint joint sets",
+      not (set(kfnoise.moved_joints(kfnoise.ARMS))
+           & set(kfnoise.moved_joints(kfnoise.LEGS))),
+      f"arms->{kfnoise.moved_joints(kfnoise.ARMS)}, "
+      f"legs->{kfnoise.moved_joints(kfnoise.LEGS)}")
+
+# --- 9. per-region metrics respond only to their own region ---------------
+g = torch.Generator().manual_seed(12)
+p = kfnoise.perturb_motion(m, KF, 30, skel, g, joints=kfnoise.ARMS)
+pos_a, pos_c = kfnoise.joint_positions(p), kfnoise.joint_positions(p0)
+check("arms-only perturbation: upper divergence >> lower divergence",
+      kfnoise.divergence(pos_a, pos_c, joints=kfnoise.UPPER) > 1e-3
+      and kfnoise.divergence(pos_a, pos_c, joints=kfnoise.LOWER) < 1e-5,
+      f"upper {kfnoise.divergence(pos_a, pos_c, joints=kfnoise.UPPER) * 1000:.1f} mm, "
+      f"lower {kfnoise.divergence(pos_a, pos_c, joints=kfnoise.LOWER) * 1000:.3f} mm")
+
 print()
 if FAIL:
     print(f"{len(FAIL)} FAILURE(S): " + ", ".join(FAIL))

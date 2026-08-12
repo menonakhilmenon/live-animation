@@ -50,6 +50,54 @@ CNT = slice(259, 263)
 FID_L, FID_R = [7, 10], [8, 11]
 FEET_THRE = 0.002  # HumanML3D's own contact threshold, from process_file
 
+# Joint groups, in HumanML3D's 22-joint ordering. Used both to restrict which
+# joints get perturbed and to read metrics out per region -- if error stays in
+# the region it was injected into, an upstream stage only has to be accurate
+# about the joints it actually cares about.
+LOWER = [0, 1, 2, 4, 5, 7, 8, 10, 11]           # pelvis, hips, knees, ankles, feet
+UPPER = [j for j in range(NJOINTS) if j not in LOWER]
+LEGS = [j for j in LOWER if j != 0]
+ARMS = [13, 14, 16, 17, 18, 19, 20, 21]         # collars, shoulders, elbows, wrists
+SPINE = [3, 6, 9, 12, 15]                       # spine1-3, neck, head
+
+JOINT_GROUPS = {
+    "all": list(range(NJOINTS)),
+    "upper": UPPER,
+    "lower": LOWER,
+    "legs": LEGS,
+    "arms": ARMS,
+    "spine": SPINE,
+}
+
+PARENT = [-1] * NJOINTS
+for _chain in t2m_kinematic_chain:
+    for _a, _b in zip(_chain[:-1], _chain[1:]):
+        PARENT[_b] = _a
+
+
+def moved_joints(joints):
+    """Joints whose world position changes when `joints` local rotations change.
+
+    Verified empirically rather than assumed: HumanML3D's rot6d entry for joint j
+    is the rotation of the bone *leading into* j (the skeleton applies it to
+    offset[j] to place j), so perturbing j moves j itself and all its
+    descendants -- not only the descendants. Joint 0 has no entry in the 21-slot
+    rotation block (its orientation is the root yaw channel), so it is neither
+    perturbed nor moved -- and listing it in a group must not propagate error to
+    the whole body, so it is dropped from the source set here exactly as
+    `perturbation_field` drops it.
+    """
+    src = {j for j in joints if j >= 1}
+    out = set()
+    for j in range(1, NJOINTS):
+        p = j
+        while p != -1:
+            if p in src:
+                out.add(j)
+                break
+            p = PARENT[p]
+    return sorted(out)
+
 
 def build_skeleton(example_npy="./dataset/000021.npy", device="cpu"):
     """Target skeleton with HumanML3D's canonical bone lengths."""
@@ -165,7 +213,8 @@ def _slerp(q0, q1, w):
     return out / out.norm(dim=-1, keepdim=True).clamp_min(1e-8)
 
 
-def perturbation_field(T, kf_idx, theta_deg, generator, device, mode="independent"):
+def perturbation_field(T, kf_idx, theta_deg, generator, device, mode="independent",
+                       joints=None):
     """Per-frame, per-joint rotation error of magnitude theta at every keyframe.
 
     Two error models, because they mean different things for an upstream stage:
@@ -186,6 +235,11 @@ def perturbation_field(T, kf_idx, theta_deg, generator, device, mode="independen
     channels are finite differences and per-frame noise would make them
     meaningless.
 
+    `joints` restricts the error to a subset of joint indices in 0..21 (in the
+    22-joint numbering; joint 0 is the root, whose rotation lives in channel [0]
+    and is never touched here). Joints outside the subset get identity, so error
+    can be injected into the arms alone and its spread measured elsewhere.
+
     Returns [T, 21, 3, 3] rotation matrices.
     """
     theta = torch.full((1,), np.deg2rad(theta_deg), device=device)
@@ -197,6 +251,14 @@ def perturbation_field(T, kf_idx, theta_deg, generator, device, mode="independen
     else:
         raise ValueError(f"unknown perturbation mode: {mode}")
     q_kf = _axis_angle_to_quat(axes, theta)  # [n_kf, 21, 4]
+    if joints is not None:
+        keep = torch.zeros(NJOINTS - 1, dtype=torch.bool, device=device)
+        for j in joints:
+            if j >= 1:  # joint 0's rotation is the root, not in the rot6d block
+                keep[j - 1] = True
+        identity = torch.zeros_like(q_kf)
+        identity[..., 0] = 1.0
+        q_kf = torch.where(keep[None, :, None], q_kf, identity)
 
     frames = torch.arange(T, device=device).float()
     kf = torch.as_tensor(kf_idx, device=device).float()
@@ -210,7 +272,7 @@ def perturbation_field(T, kf_idx, theta_deg, generator, device, mode="independen
 
 
 def perturb_motion(motion, kf_idx, theta_deg, skel, generator, abs_3d=True,
-                   mode="independent"):
+                   mode="independent", joints=None):
     """Rotate each joint by theta degrees about a random axis, then rebuild.
 
     motion: [T, 263] unnormalised.  Returns [T, 263], unnormalised.
@@ -223,7 +285,7 @@ def perturb_motion(motion, kf_idx, theta_deg, skel, generator, abs_3d=True,
     rot = cont6d_to_matrix(motion[..., ROT].reshape(T, NJOINTS - 1, 6))
     if theta_deg > 0:
         P = perturbation_field(T, kf_idx, theta_deg, generator, motion.device,
-                               mode=mode)
+                               mode=mode, joints=joints)
         # post-multiply: rotate the joint's own frame, so descendants swing with it
         rot = torch.matmul(rot, P)
     out = motion.clone()
@@ -239,18 +301,23 @@ def joint_positions(motion, abs_3d=True):
     return recover_from_ric(motion.float(), NJOINTS, abs_3d=abs_3d)
 
 
-def keyframe_error(pred_pos, target_pos, kf_idx):
+def keyframe_error(pred_pos, target_pos, kf_idx, joints=None):
     """Mean per-joint L2 distance at keyframes, in metres."""
     d = (pred_pos[kf_idx] - target_pos[kf_idx]).norm(dim=-1)
+    if joints is not None:
+        d = d[:, joints]
     return d.mean().item()
 
 
-def jerk(pos, fps=20.0):
+def jerk(pos, fps=20.0, joints=None):
     """Mean magnitude of the third time derivative of joint position, m/s^3."""
     if pos.shape[0] < 4:
         return float("nan")
     d3 = pos[3:] - 3 * pos[2:-1] + 3 * pos[1:-2] - pos[:-3]
-    return (d3.norm(dim=-1) * fps**3).mean().item()
+    d3 = d3.norm(dim=-1) * fps**3
+    if joints is not None:
+        d3 = d3[:, joints]
+    return d3.mean().item()
 
 
 def skating_ratio(pos):
@@ -268,6 +335,9 @@ def ground_penetration(pos):
     return below.max(dim=-1).values.mean().item()
 
 
-def divergence(a_pos, b_pos):
+def divergence(a_pos, b_pos, joints=None):
     """Mean per-joint L2 distance between two motions, in metres."""
-    return (a_pos - b_pos).norm(dim=-1).mean().item()
+    d = (a_pos - b_pos).norm(dim=-1)
+    if joints is not None:
+        d = d[:, joints]
+    return d.mean().item()
