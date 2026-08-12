@@ -810,6 +810,33 @@ foot-skate and 6× worse on *keyframe error itself* — because it faithfully re
 then has to fake the transitions between them. **Exact adherence is actively harmful when keyframes
 are proposals rather than ground truth.**
 
+> ⚠️ **Read this table only within itself.** These numbers are on the Blocking Poses paper's own
+> protocol and do **not** compare to CondMDI's self-reported figures ([2405.11126](https://arxiv.org/abs/2405.11126)
+> Tables 2/3: FID/R-Prec/Div/FootSkate/KeyframeErr — Random K=1 `0.1551/0.6787/9.5807/0.0936/0.3739`,
+> K=5 `0.1731/0.6823/9.3053/0.0850/0.1789`, K=20 `0.2253/0.6821/9.1151/0.0806/0.0754`, root joint
+> `0.2474/…/0.0854/0.0525`, VR joints `0.2969/…/0.0794/0.0422`). The FootSkate column above sits
+> ~55× higher across *every* row, so it is a scale difference, not a broken baseline.
+>
+> Note also what the CondMDI row does and does not show. CondMDI is being fed **blocking poses**,
+> which are out-of-distribution for it — it was trained to impute from *ground-truth* keyframes. The
+> row is therefore evidence that **CondMDI faithfully reproduces whatever it is given**, not that
+> CondMDI is weak. That is a design property, and it is precisely the property that makes it the
+> wrong choice when keys are proposals. The architectural conclusion survives; "CondMDI is bad" does
+> not follow and is not claimed.
+>
+> **General rule for this document:** third-party reproductions of CondMDI in this literature are
+> frequently misconfigured or run out-of-distribution — e.g. NINB ([2605.12778](https://arxiv.org/abs/2605.12778))
+> reports CondMDI FIDs ~10× its own under a different evaluator (its *keyframe-error* column matches
+> CondMDI's within noise, proving the model ran fine and only the FID scale differs), and AnchorRoute
+> ([2605.14716](https://arxiv.org/abs/2605.14716)) reports 0.507 m control error against CondMDI's own
+> 0.0422. Always name the paper that produced a number and check the protocol before comparing across
+> papers; flag any third-party row deviating >2× from a self-reported one. Relatedly, "Less is More"
+> ([2503.13859](https://arxiv.org/abs/2503.13859)) does **not** beat CondMDI at in-betweening — its own
+> Table 7 has it worse on FID (0.551 vs 0.153), keyframe error (0.218 vs 0.081) and skating
+> (0.082 vs 0.067); its only CondMDI win is plain text-to-motion, a different task. And NINB's
+> advertised repo (`Coondinator/NINB`) is empty — created the day of the arXiv post, one zero-byte
+> README, never pushed. **Not** code-available.
+
 Since keys here will come from an LLM, retrieval, or a small learned model, **this project is in
 the blocking-pose regime by construction, not the clean-mocap regime.** Tolerance is not an
 optimization to add later; it is the correct default from day one.
@@ -1033,9 +1060,18 @@ survey's own table (MotionMillion 2,000 h ≈ 5.4×10⁷; OmniHuMo 5,000 h ≈ 1
 The image/motion asymmetry vs ~10¹³ text tokens is real.
 
 **But the actionable gap is smaller than it looked**, and that's the part that matters:
-**MotionMillion is Apache-2.0 with 3B and 7B weights *and* the 2M-sequence dataset released**
-(§4.2). If the motivation is "I need broader semantic coverage," downloading 2,000 hours under a
-permissive license dominates building a two-stage lossy pipeline to manufacture it.
+**MotionMillion released 3B and 7B weights *and* the 2M-sequence dataset** (§4.2). If the motivation
+is "I need broader semantic coverage," downloading 2,000 hours dominates building a two-stage lossy
+pipeline to manufacture it.
+
+> 🚨 **License correction (was wrong in the first draft of this section).** MotionMillion is **not**
+> Apache-2.0. Only the *code* is; the **dataset and weights on HuggingFace
+> (`InternRobotics/MotionMillion`) are CC BY-NC-SA 4.0**, gated behind a contact form, and the corpus
+> bundles AMASS, BABEL, AIST and HumanML3D — so it is **AMASS-tainted and non-commercial**. It is
+> usable for research and prototyping, not for anything shipped commercially. The same trap applies
+> broadly: MoMask, MDM, CondMDI, OmniControl and MotionGPT all have MIT/Apache *code* whose released
+> *weights* inherit AMASS's non-commercial terms. See §8c.6 for the one genuinely clean stack, and
+> §8d for the route that dissolves this problem.
 
 ### 8c.5 What survives — the instinct was right, the extraction operator was wrong
 
@@ -1067,7 +1103,8 @@ approaches make it well-posed instead:
   (EMDB 38.2 PA-MPJPE / 61.7 MPJPE), ships **code and weights under the SAM License (commercial
   use permitted)**, and its **MHR body model is Apache-2.0**. **Anny**
   ([2511.03589](https://arxiv.org/abs/2511.03589)) is an Apache-2.0 scan-free all-age body model.
-  Together with MotionMillion (Apache-2.0) that is a genuine commercial path — worth knowing before
+  Together with a self-captioned commercially-clean mocap corpus (§8d.2 — *not* MotionMillion, whose
+  weights and data are CC BY-NC-SA) that is a genuine commercial path — worth knowing before
   committing to SMPL, since the MPI license *"prohibits the use of the Software to train
   methods/algorithms/neural networks/etc. for commercial use."*
 - **⚠️ The license trap is real and specific:** NLF and 4D-Humans have **MIT code but
@@ -1100,6 +1137,295 @@ approaches make it well-posed instead:
   (*"left arm raised 45 degrees"*) rather than intent (*"reaching for a book on a high shelf"*).
   **CoT-Pose** ([2508.07540](https://arxiv.org/abs/2508.07540), ICCVW 2025) attacks exactly that
   abstraction gap and is worth watching.
+
+---
+
+## 8d. Multi-stage decomposition with manufactured intermediate supervision
+
+*Added 2026-08-12. The current design direction: rather than solving text→motion in one shot, stage
+it, and manufacture the training data for the intermediate steps.*
+
+### 8d.1 ⭐ The taxonomy that dissolves the "staged vs end-to-end" debate
+
+Three unrelated things are all called "decomposition," and conflating them is the single largest
+source of confusion in this literature:
+
+| | Boundary | Differentiable? | Verdict |
+|---|---|---|---|
+| **D1 — representation staging** (VQ/RVQ tokenizer → generator) | learned codes | effectively yes | **universal in 2026, mandatory** |
+| **D2 — intra-model hierarchy** (coarse→fine temporal scales, part-factored latents + fusion) | latents in one graph | yes | **works; modest (~1.8× FID)** |
+| **D3 — symbolic inference-time pipeline** (LLM script → keyframes → interp → critic) | human-readable symbols | **no** | **loses on quality, wins on control** |
+
+**Every 2026 leaderboard leader is D1+D2. None is D3.** Papers claiming "staged pipelines beat
+monolithic in 2026" nearly always mean D1 staged *training* — tokenizer, then generator — which says
+nothing about a symbolic pipeline. Read every such claim against this table first.
+
+**No D3 system beats a strong end-to-end baseline on both FID and R-Precision.** The signature is
+always alignment up, realism flat or much worse:
+
+- **Text2BFM** ([2605.29906](https://arxiv.org/abs/2605.29906), 2026), the purest "decouple semantic
+  planning from motion execution" system: **R@3 0.876** (best in the literature, vs MoMask 0.807)
+  and **FID 1.172 vs MoMask's 0.045 — 26× worse.**
+- **FG-MDM** ([2312.02772](https://arxiv.org/abs/2312.02772)): FID 0.663 vs T2M-GPT 0.116. The
+  authors state it plainly: *"under within-dataset settings, our model does not exceed those SOTA
+  models."*
+- **LaMoGen** ([2603.11605](https://arxiv.org/abs/2603.11605)): a wash against ReMoDiffuse, and the
+  authors attribute the FID lag to Laban abstraction *"collaps[ing] low-level variation"* — the
+  bottleneck, named by its own designers.
+- PlanMoGPT's own abstract: *"LLM-based methods lag far behind non-LLM methods."* MotionGPT-2 with a
+  fine-tuned LLaMA-3.1-8B scores FID 0.191 — worse than T2M-GPT (2023, GPT-2-scale) and **4.2×
+  worse than MoMask, which uses no LLM at all.**
+
+**Why: the intermediate representation is an information bottleneck that discards exactly what makes
+motion look real.** A beat script and sparse keys encode *what* and *when*; they do not encode
+momentum, weight transfer, contact state, anticipation, or sub-beat phase. Four independent
+measurements of the same bottleneck:
+
+| Boundary | Measured cost |
+|---|---|
+| Vanilla VQ tokenizer | recon FID **0.070** / MPJPE 58.0 mm — a floor under T2M-GPT's 0.141 generation FID, i.e. **half its total error is the boundary** |
+| RVQ tokenizer (MoMask) | recon FID **0.019** / 29.5 mm → generation FID 0.141 → **0.045** |
+| Pose-keyframe injection by guidance | GMD FID 0.212 → **0.874** (4.1×) |
+| Multi-joint keyframe injection | OmniControl 0.218 → 0.624; TLControl's reproduction **2.614** |
+| Part-split decoder | CoMA recon FID 0.027 → **0.046** |
+| Independent part generation, no fusion | LGTM 0.218 → **7.384**; ParCo 0.109 → **3.652** |
+| Segment seams, best method | FlowMDM subseq FID 0.29 → transition FID **1.38** (4.8×) |
+| Multi-action semantic drift | Text2BFM order accuracy **0.671** (3 actions) → **0.509** (4 actions) |
+
+**The largest FID improvement in the field's history came from *weakening* a stage boundary**
+(MoMask's RVQ), not from a better generator. That is the argument against D3 in one sentence.
+
+⚠️ Note what the LGTM/ParCo ablations actually measure. FID 0.218 → 7.384 is not "hierarchy helps";
+it is "decomposition is catastrophic without a repair stage, and the repair stage does all the
+work." Self-inflicted wound plus bandage.
+
+### 8d.2 ⭐⭐ The licensing unlock — the reason to build a captioner regardless
+
+This is the most valuable single finding in the entire research effort, and it is a side effect.
+
+Every commercially-clean mocap corpus — **CMU** (license explicitly permits inclusion in
+commercially-sold products), **100STYLE** (CC BY 4.0), **StayStill** (CC BY 4.0), **IDEA400** — has
+**no text annotations.** That absence is *precisely why* nobody uses them for text-to-motion, and
+why the entire field is built on AMASS and is therefore non-commercial (see §8c.6 and §8d.6).
+
+**A rule-based captioner you write yourself is the mechanism that converts commercially-shippable
+geometry into commercially-shippable (text, motion) pairs, with no AMASS anywhere in the lineage.**
+The rules are algorithmic and reimplementable: PoseScript's **77 posecodes + 10 super-posecodes** are
+a *specification*, not data. SMD's 26-joint biomechanical rule set is CC BY 4.0.
+
+This turns licensing from a blocking constraint into a solvable engineering task. Nothing else in
+this research does that.
+
+### 8d.3 Backtranslation: works, but only as pretraining
+
+PoseScript ([2210.11795](https://arxiv.org/abs/2210.11795), Table II) ran exactly the relevant
+experiment. It has stood unchallenged for four years:
+
+| Stage-2 training data | mRecall on **human-written** test captions |
+|---|---|
+| Auto-captions only (100k poses × 3) | **5.9** ±0.4 |
+| Human captions only (~4.4k) | 23.0 ±0.6 |
+| **Auto-pretrain → human-finetune** | **40.9** ±0.1 |
+
+*(the same auto-only model scores 72.8 on its own auto-caption test set)*
+
+Two conclusions, and both matter:
+
+1. **Zero-shot transfer from templated captions to free-form language does not happen.** 5.9 is
+   *worse* than training on 4.4k human captions alone, and 12× worse than the model's in-domain
+   score. The template distribution is a different language. The paper: *"the performance degrades
+   on human captions, as many words from the richer human vocabulary are unseen during training."*
+2. **As pretraining it is the largest win in the text-to-pose literature.** Generation FID
+   **0.29 → 0.04**; mRecall **5.2% → 19.5%**. Larger than any architecture change published (adding
+   a transformer encoder: +2.4 mRecall; mirroring: +2.0). And it scales monotonically with
+   manufactured volume (10k → 20k → 100k), so budget converts to accuracy.
+
+**Therefore: ~5k human captions is a non-negotiable line item.** PoseScript used 6,283 (54.2 tokens
+average, 1,866-word vocabulary). Collect them on *your* prompt distribution, not AMT-generic.
+
+Cost calibration: PoseScript generated **300k captions in under 10 minutes**. HumanML3D's 44,970
+human descriptions over 14,616 motions is the comparison point.
+
+**Do not iterate a captioner on its own output.** Model collapse occurs when synthetic data
+*replaces* real; *"accumulating the successive generations of synthetic data alongside the original
+real data avoids model collapse"* with error bounded independent of iteration count
+([2404.01413](https://arxiv.org/abs/2404.01413)). Accumulate, never recurse.
+
+### 8d.4 ⭐ Architectural rule: rules perceive, the LLM speaks
+
+The strongest motion captioner is **not** a learned model. **SMD**
+([2604.21668](https://arxiv.org/abs/2604.21668), CC BY 4.0) computes **26 biomechanical joint angles**
+in ISB anatomical frames, segments each time-series into *increases / decreases / holds / repeats N
+cycles*, emits hierarchical structured text, and LoRA-finetunes an LLM to turn it into prose. It
+beats every learned motion encoder by ~9 BLEU@4:
+
+| Method | BLEU@4 | CIDEr | BertScore |
+|---|---|---|---|
+| TM2T | 7.0 | 35.1 | 32.2 |
+| MotionGPT | 12.5 | 39.4 | 32.4 |
+| LaMP | 13.0 | 39.7 | 32.7 |
+| MotionGPT3 | 19.4 | 40.6 | 35.2 |
+| **SMD** (rules → LLM) | **22.7** | **53.2** | **45.6** |
+
+For calibration, COCO image captioning passed BLEU@4 ≈ 40 years ago. **BLEU@4 of 13 is not a
+pseudo-labeler — never use a learned motion captioner as your annotator.**
+
+🚨 **Do not render mocap and caption it with a VLM.** Three independent measurements:
+
+- **UniPose** ([2411.16781](https://arxiv.org/abs/2411.16781)): on pose-captioning from images,
+  **GPT-4V scores BLEU-4 7.1** vs 18.2 for a small specialist — 2.5× worse.
+- **MotionBench** ([2501.02955](https://arxiv.org/abs/2501.02955), CVPR 2025): SOTA VLMs are **below
+  60%** on fine-grained motion QA (chance = 0.25). *Action-order* sits at 0.30–0.39 and repetition
+  counting at **0.25–0.33, i.e. chance**. Text-only GPT-4o scores 0.33 — most apparent competence is
+  language prior, not perception. Verbatim: *"significantly below the threshold for practical
+  applications."*
+- **ActPLD** ([2509.23517](https://arxiv.org/abs/2509.23517)): MLLMs show *"consistently low
+  performance"* on point-light joint displays — the stimulus closest to a rendered skeleton, which
+  humans read trivially.
+
+Expected failure modes if you try it anyway: temporal order and repetition count near chance;
+view-dependent left/right and toward/away ambiguity; subtle joint angles invisible at render
+resolution; and GPT-4o documented inventing hand-held objects and occluders on SMPL renders. **No
+paper found does this in production.** The field caption *source video* (MotionMillion via GPT-4o,
+OmniHuMo via Qwen3-VL-32B) or apply *rules to geometry*. That convergence is the answer.
+
+### 8d.5 ⭐ Solving the abstraction gap in the director, not the pose model
+
+The gap: a geometry-trained pose model expects *"left arm raised 45°"*; a director emits *"reaching
+for a book on a high shelf."* **CoT-Pose** ([2508.07540](https://arxiv.org/abs/2508.07540)) is the
+only paper attacking it directly — it trains on **239 synthetic samples**, and its own Table 3 shows
+that *removing* the reasoning loss gives **better** numbers (MPJPE 115.14 vs 124.91). The bridge is
+not yet an engineering result.
+
+**But the pose model does not have to bridge it.** Translating intent into geometric prose is a pure
+language task requiring no training data — an LLM already does it. Put the bridge in the director,
+and the pose model only ever sees the geometry-prose distribution it was trained on. The scarce stage
+stops being *semantics → pose* and becomes *geometry-prose → pose*, which is exactly what 300k
+manufactured captions teach.
+
+⚠️ **Absolute accuracy is poor regardless.** Best text→static-pose is **UniPose at 308.6 mm MPJPE**
+(PoseScript baseline 318.0). That is a coarse initializer, not a shippable keyframe. Whether it
+suffices depends entirely on downstream error tolerance (§8d.7).
+
+### 8d.6 Which stages survive, with the evidence
+
+| Stage | Data situation | Verdict |
+|---|---|---|
+| 1. Text → beat script | LLM emits it; free | **keep — as a control surface and training-time signal, not a generation bottleneck** |
+| 2. Beat → sparse keyframe poses | the only genuinely starved stage | **keep, but change how keys enter the model** |
+| 3. Keys + timings → dense motion | **self-supervised by construction** — mask any clip, learn to restore | **keep — near-free at ≤0.5 s spacing** |
+| 4. Plausibility critic | **license-free** — geometry + physics | **⭐ keep — best-supported stage in the pipeline** |
+| 5. Retarget to VRM | deterministic | keep |
+
+**⭐ Stage 2 — the keyframe tax is a backbone choice, not a law:**
+
+| How keys enter | Behavior as keys densify |
+|---|---|
+| Guidance bolted onto an unconditional model (GMD, OmniControl) | **collapses** — 0.212 → 0.874; 0.218 → 0.624 → 2.614 |
+| Natively trained on keyframe conditioning (CondMDI) | **graceful** — unconstrained 0.2538 → K=1 **0.1551, better than unconstrained** |
+| Masked-generative / latent optimization (MaskControl, TLControl) | **improves with density** — 0.077 at 1 frame → **0.054** at 196 |
+
+**Never bolt keyframe guidance onto an unconditional model.** A natively-conditioned or
+masked-generative backbone pays little or nothing, and denser conditioning can *help* by removing
+ambiguity. This single choice is worth more than the rest of the pipeline design.
+
+**⚠️ Stage 3 — correcting §8b.5's sparsity budget.** §8b put the budget at ~1 key/second. The
+in-betweening data says that is precisely where it breaks. SILK
+([2506.09075](https://arxiv.org/abs/2506.09075)) on LaFAN1, L2P by gap:
+
+| Method | 5f (0.17 s) | 15f (0.5 s) | 30f (1 s) | 45f (1.5 s) |
+|---|---|---|---|---|
+| SLERP | 0.37 | 1.38 | 2.49 | 3.45 |
+| Harvey RMIB (2020) | 0.23 | 0.65 | 1.28 | 2.24 |
+| **SILK (2025)** | **0.13** | **0.38** | **0.83** | **1.59** |
+
+Error grows **4–6×** across that range, and below 15 frames even SLERP is competitive — SILK's
+authors note models "tend to make highly similar predictions" there. **Keys at ≤0.5 s make
+in-betweening nearly free; ≥1 s makes it the bottleneck. Use 2× denser keys than §8b says.**
+
+**⭐ Stage 4 — the best-supported component in the whole design:**
+
+| Critic | Target metric | FID side-effect |
+|---|---|---|
+| **PhysDiff** ([2212.02500](https://arxiv.org/abs/2212.02500)), HumanML3D | phys-err **31.572 → 4.111 mm**; penetrate 11.291 → 0.998; float 18.876 → 2.601; skate 1.406 → 0.512 | 0.544 → **0.433 (better)** |
+| PhysDiff, UESTC | phys-err **28.371 → 1.463 mm** | 12.81 → 13.27 (**worse**) |
+| **MotionCritic** ([2407.02272](https://arxiv.org/abs/2407.02272), ICLR'25) | critic score −1.64 → **+2.78**; RL fine-tune = **0.23% of pretraining cost** | 0.13 → 0.18 (**worse**) |
+| **AToM** ([2411.18654](https://arxiv.org/abs/2411.18654), CVPR'25) | event-level alignment up | 0.655 → **0.613 (better)** |
+
+MotionCritic's discriminative power on 52,563 human preference pairs: **85.07%** (MDM subset) /
+**81.43%** (FLAME subset), vs MoBERT 49.40/52.40, person-ground-contact heuristic 71.78/69.82,
+physical-foot-contact 64.79/66.00. Public code and weights.
+
+> 🚨 **A working critic makes FID worse.** Two of the four rows above improve their target metric
+> dramatically while FID regresses. **If FID is your acceptance criterion you will delete a working
+> stage.** Track physics metrics, a learned perceptual critic, and FID as three independent axes.
+
+**Two things to drop:**
+
+- **Hard segment stitching.** FlowMDM ([2402.15509](https://arxiv.org/abs/2402.15509)) beats
+  stitching by **3.4–4.9× on jerk** (AUJ 0.13 vs TEACH 0.44, DoubleTake 0.64 on BABEL). The field's
+  whole trajectory since is boundary removal: stitching → joint denoising → MotionStreamer's causal
+  latents. **Generate long and refine locally; do not generate short and glue.** ⚠️ FID cannot detect
+  a bad seam — FlowMDM notes the *"lack of correlation between FID and AUJ."*
+- **The belief that semantic beat boundaries must be accurate.** SegMo
+  ([2512.21237](https://arxiv.org/abs/2512.21237)) found **uniform, semantically meaningless
+  segmentation beat both change-point detection and clustering.** Consistency mattered; semantic
+  precision did not. SegMo's actual win (FID 0.045 → 0.042, R@1 0.521 → 0.553) came from using LLM
+  segmentation as a **training-time contrastive alignment loss**, not an inference-time handoff.
+
+### 8d.7 Before building any of it — the cheaper fix, and the honest caveats
+
+**⭐ Fix text conditioning first.** **CASIM** ([2502.02063](https://arxiv.org/abs/2502.02063)) solves
+the compositional-semantics problem that motivates a beat script *with no staging at all*, by
+replacing pooled `[CLS]` conditioning with token-level cross-attention:
+
+| Backbone | R@1 | FID |
+|---|---|---|
+| T2M-GPT → CASIM | 0.491 → **0.539** | 0.116 → **0.105** |
+| MoMask → CASIM | 0.510 → **0.532** | 0.064 → **0.057** |
+| MDM → CASIM | 0.455 → **0.502** | 0.489 → **0.165** |
+
+**Every staged system trades one metric for the other; CASIM improves both, on every backbone.** It
+is the only result in this entire survey that does not trade. Likewise **MultiAct**
+([2605.30925](https://arxiv.org/abs/2605.30925)), a *training-free* inference-time attention
+reweighting on monolithic MDM, beats STMC — the flagship staged timeline system — **83.69 vs 20.78
+on human-judged alignment (4×)**. Note also that all R@1 values there are 0.03–0.11: **composite
+prompts are unsolved by everyone, staged or not.**
+
+⚠️ **Compose parts semantically or not at all.** SINC ([2304.10417](https://arxiv.org/abs/2304.10417)):
+random part-composition gives **literally zero** gain (0.618 vs 0.618 baseline); GPT-guided part
+assignment gives 0.647 (+3.9%). GPT-3 part-labelling accuracy: free-form 56%, with a body-part list
+78%, **list + few-shot 87%** (velocity baseline 39%).
+
+⚠️ **STMC is the most mis-cited paper in this space.** Its timeline is *user-specified or taken from
+ground truth*; GPT-3 only optionally tags body parts. **There is no LLM planning stage.** Similarly,
+MotionGPT/-2, MotionChain, AvatarGPT and PlanMoGPT are unified single models, not planner/generator
+splits; Motion-Agent emits a sub-instruction list with no timing and no body-part fields.
+
+**Evidence caveats, stated plainly:**
+
+- **There is no controlled staged-vs-end-to-end study at matched data and compute for text-to-motion.**
+  Everything above is indirect. This is the largest gap in the evidence base and it cuts both ways.
+- **Papers With Code shut down July 2025.** There is no canonical maintained HumanML3D leaderboard;
+  every ranking is self-reported.
+- **MARDM** ([2409.19686](https://arxiv.org/abs/2409.19686)) retrained the Guo et al. feature
+  extractor that every FID/R-Precision since 2022 depends on. **Pre- and post-2025 numbers are not
+  comparable.**
+- **R-Precision is exploitable** — several methods score *above real motion* (real = 0.797; Text2BFM
+  reports 0.876). Any architecture argument resting on R-Precision alone is unsafe.
+- **Treat any claimed HumanML3D FID improvement under ~0.02–0.03 as noise.**
+- Nobody publishes **requested-vs-realized duration error.** Text2BFM's order accuracy (0.671 at
+  N=3, 0.509 at N=4) is the closest proxy. **If timing fidelity is this pipeline's value
+  proposition, that metric must be built here.**
+- No controlled auto-caption-vs-human-caption ablation exists for *motion* — only for static pose
+  (PoseScript). MotionMillion, OmniHuMo and CompMo, the three largest auto-captioned corpora, report
+  **zero** caption-quality measurements.
+
+**Licensing, updated:** MoMask (MIT), MDM (MIT), CondMDI (MIT), OmniControl (MIT), T2M-GPT and ParCo
+(Apache-2.0) form a clean-*code* stack — but every released checkpoint inherits AMASS's
+non-commercial terms. **FlowMDM and STMC — the two systems most relevant to composition and timeline
+control — are themselves non-commercial licensed.** CoMo is CC BY-NC-**ND** (no derivatives at all).
+§8d.2 is the only route around this.
 
 ---
 
