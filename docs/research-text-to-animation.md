@@ -810,19 +810,33 @@ foot-skate and 6× worse on *keyframe error itself* — because it faithfully re
 then has to fake the transitions between them. **Exact adherence is actively harmful when keyframes
 are proposals rather than ground truth.**
 
-> ⚠️ **Read this table only within itself.** These numbers are on the Blocking Poses paper's own
-> protocol and do **not** compare to CondMDI's self-reported figures ([2405.11126](https://arxiv.org/abs/2405.11126)
-> Tables 2/3: FID/R-Prec/Div/FootSkate/KeyframeErr — Random K=1 `0.1551/0.6787/9.5807/0.0936/0.3739`,
-> K=5 `0.1731/0.6823/9.3053/0.0850/0.1789`, K=20 `0.2253/0.6821/9.1151/0.0806/0.0754`, root joint
-> `0.2474/…/0.0854/0.0525`, VR joints `0.2969/…/0.0794/0.0422`). The FootSkate column above sits
-> ~55× higher across *every* row, so it is a scale difference, not a broken baseline.
+> 🚨 **UNIT ERROR — the table above is missing its column multipliers.** Source Table 1 of
+> [2509.16064](https://arxiv.org/abs/2509.16064) reads **FootSkate ×10⁻³** and **Jitter ×10⁻²** and
+> **KE ×10⁻²**. So CondMDI's `29.51` is **0.0295** — *lower* than CondMDI's own published
+> 0.0806–0.0936. Different metric definitions on different clip lengths (60-frame splices here vs
+> 196-frame there). **No number in this table compares to anything outside it.**
 >
-> Note also what the CondMDI row does and does not show. CondMDI is being fed **blocking poses**,
-> which are out-of-distribution for it — it was trained to impute from *ground-truth* keyframes. The
-> row is therefore evidence that **CondMDI faithfully reproduces whatever it is given**, not that
-> CondMDI is weak. That is a design property, and it is precisely the property that makes it the
-> wrong choice when keys are proposals. The architectural conclusion survives; "CondMDI is bad" does
-> not follow and is not claimed.
+> ⚠️ **And the CondMDI row is a stress test, not a like-for-like benchmark.** Every method was fed
+> deliberately degraded input: ≤10 keys per 60-frame clip, only "important" joints retained
+> (root/shoulders/elbows/hips/knees) with **the rest set to neutral**, plus **±5-frame timing
+> noise**. The authors are explicit that CondMDI *"expects the posing and timing of input keyframes
+> to appear in the output exactly as they appear in the input"* and *"struggles when faced with
+> coarsely specified input."* The row shows **exact-adherence models break on proposal-quality
+> keys** — a design property, and precisely the property that disqualifies exact adherence here. It
+> does **not** show CondMDI is a weak in-betweener, and this document does not claim that.
+>
+> ✅ **The claim survives without that row — quote this instead.** The clean internal ablation is
+> `R-NoTolerance` vs `Ours (c=0.50)`: identical architecture, identical protocol, tolerance the only
+> variable. **FootSkate 8.19 → 5.14 (−37%), FID 0.077 → 0.038 (−51%), Jitter −21%, and KE
+> 0.145 → 0.106 (−27%).** Tolerance improves keyframe error *while* improving quality. That is the
+> load-bearing result.
+>
+> CondMDI reference figures for comparison ([2405.11126](https://arxiv.org/abs/2405.11126) Tables 2/3
+> — FID/R-Prec/Div/FootSkate/KeyframeErr): Random K=1 `0.1551/0.6787/9.5807/0.0936/0.3739`, K=5
+> `0.1731/0.6823/9.3053/0.0850/0.1789`, K=20 `0.2253/0.6821/9.1151/0.0806/0.0754`, root joint
+> `0.2474/…/0.0854/0.0525`, VR joints `0.2969/…/0.0794/0.0422`.
+> ⚠️ **CondMDI is arXiv 2405.11126.** The ID `2405.10874`, which circulated in earlier drafts of this
+> document, is a GNSS-visual-inertial navigation paper.
 >
 > **General rule for this document:** third-party reproductions of CondMDI in this literature are
 > frequently misconfigured or run out-of-distribution — e.g. NINB ([2605.12778](https://arxiv.org/abs/2605.12778))
@@ -1075,6 +1089,31 @@ pipeline to manufacture it.
 
 ### 8c.5 What survives — the instinct was right, the extraction operator was wrong
 
+> 🚨 **RETRACTED 2026-08-12, same day.** The multi-view recommendation below did not survive
+> verification. **MAS has no text conditioning whatsoever** — it trains a separate *unconditional*
+> 2D motion diffusion model per domain, and the released weights are NBA basketball (~60K), horse
+> jumping (~2K) and rhythmic gymnastics (~500), all scraped video. There is no mechanism to ask it
+> for "a person crouching to pick up a box," and no engineering fixes that without retraining on
+> captioned data that does not exist. Three further reasons: (a) the 2D prior is architecturally a
+> **sequence** model — c-MAS confirms it *"does not explicitly address processing single static
+> frames"* — so it cannot emit sparse keys without generating dense motion first, inverting the
+> pipeline; (b) therefore sparse output is **not** cheaper (c-MAS runs at ~2.4 FPS with **1,000
+> optimization iterations per denoising step**, V=7 views); (c) absolute accuracy is mediocre —
+> c-MAS reaches **113.4 mm MPJPE** on Yoga90, which is genuinely impressive for an *unsupervised*
+> method beating supervised lifting, but is still 2D→3D lifting **from a real image**, not
+> generation from text.
+>
+> **The replacement for this stage is retrieval, not multi-view generation — see §8d.8.**
+> One thing here is still worth stealing: CoT-Pose's *offline data synthesis* path
+> (FLUX-LoRA → SMPLest-X) exploits the 2D image prior exactly as intended. ⚠️ But its yield was
+> **239 usable samples after manual filtering.** Viable to expand a pose bank offline; not viable as
+> an online proposer.
+>
+> MAS ([roykapon/MAS](https://github.com/roykapon/MAS)) is **MIT with released weights and no AMASS
+> in its lineage** — the cleanest license in this entire document, and unusable here for want of text
+> conditioning. c-MAS has **no license file**. AnimaX animates *arbitrary articulated meshes*, not
+> humans specifically.
+
 Using the image/video domain as the semantic engine is sound. **Monocular lifting is the wrong way
 to extract from it**, because it is an ill-posed inverse problem with no error signal. Two
 approaches make it well-posed instead:
@@ -1116,11 +1155,14 @@ approaches make it well-posed instead:
   Stanford 2026) gives six directly reusable metrics: extra-limb detection, bone-length consistency,
   joint ROM vs biomechanics tables, self-collision (BVH triangle-triangle, mild/severe), kinematic
   extremes, motion smoothness (jerk). Best video generators score **91.1 vs 94.3 for real footage**.
-- **⭐ A physics tracking policy is a strong plausibility oracle, with a yield number.** **OpenT2M**
-  ([2603.18623](https://arxiv.org/abs/2603.18623)) keeps a video-extracted motion only if an
-  AMASS-trained RL tracking policy can physically track it — and **discarded over 37% of extracted
-  motions**. Their conclusion: strong zero-shot performance came from **data cleaning, not
-  architecture**. Directly supports the §5/§5.1 verifier-and-rerank plan.
+- 🚨 **DISPUTED — do not cite until re-verified.** An earlier draft claimed **OpenT2M**
+  ([2603.18623](https://arxiv.org/abs/2603.18623)) filters video-extracted motion through an
+  AMASS-trained RL tracking policy and **discarded over 37%**. A later verification pass reports
+  2603.18623 is *"OpenT2M: No-frill Motion Generation with Open-source, Large-scale, High-quality
+  Data"* (Cao et al., Mar 2026) — a **2,800-hour dataset plus tokenizer, not a physics policy**. The
+  two readings are incompatible. **The 37% figure is unsupported until someone opens the paper.** The
+  underlying idea (use a tracking policy as a plausibility oracle) remains sound on PHC's evidence
+  below; only this citation is in question.
 - **DPoser** ([2312.05541](https://arxiv.org/abs/2312.05541), code MIT) is the current best
   general-purpose pose prior — FID 0.07 / Precision 0.72 / Recall 0.80 vs VPoser 0.66/0.29/0.42.
   ⚠️ Note **Pose-NDF's headline diversity (APD 18.75) comes from generating off-manifold poses** —
@@ -1329,9 +1371,12 @@ suffices depends entirely on downstream error tolerance (§8d.7).
 masked-generative backbone pays little or nothing, and denser conditioning can *help* by removing
 ambiguity. This single choice is worth more than the rest of the pipeline design.
 
-**⚠️ Stage 3 — correcting §8b.5's sparsity budget.** §8b put the budget at ~1 key/second. The
-in-betweening data says that is precisely where it breaks. SILK
-([2506.09075](https://arxiv.org/abs/2506.09075)) on LaFAN1, L2P by gap:
+**Stage 3 — the sparsity budget: ~1 key/second stands. There is no cliff.**
+
+An intermediate draft of this section halved the budget to 0.5 s on the strength of SILK's
+in-betweening curve. **That was an over-correction, and the reconciliation is the useful part.**
+
+SILK ([2506.09075](https://arxiv.org/abs/2506.09075)) on LaFAN1, **L2P** by gap:
 
 | Method | 5f (0.17 s) | 15f (0.5 s) | 30f (1 s) | 45f (1.5 s) |
 |---|---|---|---|---|
@@ -1339,9 +1384,74 @@ in-betweening data says that is precisely where it breaks. SILK
 | Harvey RMIB (2020) | 0.23 | 0.65 | 1.28 | 2.24 |
 | **SILK (2025)** | **0.13** | **0.38** | **0.83** | **1.59** |
 
-Error grows **4–6×** across that range, and below 15 frames even SLERP is competitive — SILK's
-authors note models "tend to make highly similar predictions" there. **Keys at ≤0.5 s make
-in-betweening nearly free; ≥1 s makes it the bottleneck. Use 2× denser keys than §8b says.**
+versus [2504.09413](https://arxiv.org/abs/2504.09413), uniformly-spaced keys over 200-frame
+sequences, measuring **K-FID**:
+
+| Key interval | ≈ @30 fps | K-FID ↓ | K-Error ↓ |
+|---|---|---|---|
+| 25 f | 0.83 s | 1.884 | 8.1 mm |
+| 50 f | 1.67 s | 2.406 | 11.1 mm |
+| 100 f | 3.33 s | 3.433 | 15.0 mm |
+| 200 f | 6.67 s | 5.292 | 19.4 mm |
+
+**Both are correct about their own metric, and only one of them is your metric.** L2P measures
+divergence from *one specific ground-truth motion* — a reconstruction task, where error must grow
+with gap length because the ambiguity grows. **You are not reconstructing a known motion; you are
+generating a plausible one, where any manifold-valid answer is correct.** K-FID is the relevant
+measure, it degrades smoothly and roughly logarithmically, and **there is no cliff anywhere out to
+6.7 seconds**. At ~1 key/s you sit at K-FID ≈ 2.0 / K-Error ≈ 9 mm — the comfortable end, with ~3×
+headroom to the sparsest point anyone has measured.
+
+**⭐ And density is not free — CondMDI's FID gets *worse* as you add keys** (Table 2 above): K=1
+`0.1551` → K=20 `0.2253`, **45% worse**, while keyframe error improves 5× (0.3739 → 0.0754). Foot
+skate and R-precision stay flat. **Sparser keys mean more freedom and more natural motion.** There is
+no quality collapse at high sparsity; there is a quality *penalty* at low sparsity, because the model
+is forced to hit poses it would not have chosen. Corroborated by SFControl
+([2503.15557](https://arxiv.org/abs/2503.15557), ICCV'25), which runs at **1 key per 1.5 s with only
+half of six keyjoints — 0.454% of the total joint signal** — and still reaches FID 0.224.
+
+⚠️ Note what none of this measures: *"is it the motion the text asked for."* CondMDI's R-precision is
+flat at ~0.68 across all densities. Sparsity governs plausibility; **semantic fidelity is the
+proposer's job** (§8d.8).
+
+**⭐ Stage 3 — drop text from the densifier entirely.** CondMDI's unconditional synthesis (no keys,
+no text) scores FID 0.2538 / R-prec **0.6450**. Add 5 keyframes and *no text*: FID 0.1731 / R-prec
+**0.6823**. **A text-alignment metric improves from keyframes alone — keyframes carry the
+semantics.** NINB ([2605.12778](https://arxiv.org/abs/2605.12778)) is a 2026 in-betweener that uses
+**no text at any stage** and positions text-freedom as an advantage; 2504.09413 and SFControl are
+text-optional; CondMDI ships a text-free *and* an unconditional checkpoint (10% text dropout, 10%
+keyframe dropout, so one checkpoint covers all four conditioning modes).
+
+This is a real architectural simplification: it confines *all* text conditioning to the proposer,
+removes CLIP/T5 from the densifier, and eliminates its dependence on **captioned** mocap — which is
+far scarcer than raw mocap and is the whole reason self-supervision matters here.
+⚠️ No paper runs the clean "same model, same keys, text on vs off" ablation across a sparsity sweep.
+Expect text to matter more as keys get sparser (at K=1 it is doing most of the work); **that curve
+does not exist in the literature.**
+
+**⭐⭐ Stage 3 — train on a realistic mask distribution. Highest-leverage deviation from standard
+practice.** Every in-betweener from 2023–2026 trains on uniform random masking, verified from method
+sections and repo configs. CondMDI, verbatim: *"the number of keyframes k is first sampled within the
+length of the motion sequence, and then these k keyframes are randomly picked out of all the
+frames."* **Uniform random masking teaches the model to expect keys that are already perfectly on the
+ground-truth manifold at exactly the right time — which a proposer's keys will not be.**
+
+The one exception, and the one to copy: Goel et al. CGF 2025
+([2503.01016](https://arxiv.org/abs/2503.01016)) mines **extrema poses** (apex of a jump, etc.),
+shifts each by random **Δ ∈ [−5, 5)** frames, and deletes a surrounding window. Its measured payoff
+under only **±5 frames** of timing noise, HumanML3D 60-frame clips:
+
+| | **LT (time-warp head)** | NoWarp | **CondMDI** | Interp(5) |
+|---|---|---|---|---|
+| Keypose Error (10⁻²) | **0.019** | 0.025 | **0.120** | 1.68 |
+| L2-Pos global (10⁻¹) | **0.03** | 0.04 | **0.43** | 1.35 |
+| Jitter (10⁻²) | **0.22** | 0.26 | **0.75** | 0.43 |
+
+**CondMDI's keypose error is 6.3× worse and its global position error 14× worse** under ±5 frames of
+jitter. The fix is an explicit **time-warping head plus spatial residuals**. Secondary support: IKMo
+([2505.21146](https://arxiv.org/abs/2505.21146)) reports FID **0.594 without** noise-augmented
+training vs **0.238 with**, under perturbed keys — a 2.5× blowup that augmentation flattens.
+*(Unverified at source.)*
 
 **⭐ Stage 4 — the best-supported component in the whole design:**
 
@@ -1426,6 +1536,134 @@ splits; Motion-Agent emits a sub-instruction list with no timing and no body-par
 non-commercial terms. **FlowMDM and STMC — the two systems most relevant to composition and timeline
 control — are themselves non-commercial licensed.** CoMo is CC BY-NC-**ND** (no derivatives at all).
 §8d.2 is the only route around this.
+
+### 8d.8 ⭐ The proposer: retrieve, do not generate
+
+**Text→pose generation is not competitive.** SOTA on the standard benchmark:
+
+| Text→pose generation | MPJPE ↓ | PA-MPJPE ↓ | FID ↓ |
+|---|---|---|---|
+| PoseScript | 318.0 mm | 161.3 | 0.075 |
+| **UniPose** ([2411.16781](https://arxiv.org/abs/2411.16781), CVPR'25) | **308.6 mm** | 171.1 | **0.038** |
+
+**308 mm of error per joint — roughly the length of a femur.** For calibration, PHC tracks *full
+motion* at 48 mm. The field has been optimizing retrieval-flavoured proxies (RT2P) and FID while
+absolute joint error stayed enormous. Note also that **ChatPose scores 17.6 RT2P@5 against the 2022
+PoseScript baseline's 40.4** — LLM-based pose generation is not automatically better.
+
+**Retrieval, same task:**
+
+| Method | mRecall | Gallery |
+|---|---|---|
+| PoseScript ([2210.11795](https://arxiv.org/abs/2210.11795)) | 45.3 | 1,234 |
+| **PoseEmbroider** ([2409.06535](https://arxiv.org/abs/2409.06535), ECCV'24) | **78.7** (T→P) | ~10k |
+| **CLEP** (CVPR 2026) | 75.69 | **2M** |
+
+Retrieval also guarantees something generation cannot: **every retrieved pose is a real human pose**,
+so there is nothing off-manifold for the critic to catch. And it is cheap — PoseEmbroider reports
+*"below 4 minutes for a 10k-sized set"* on a V100; at 10M poses this is a sub-second FAISS ANN
+lookup. Supporting evidence that text genuinely informs 3D pose: adding a text cue to image-based
+SMPL regression improves PA-MPJPE **49 → 44 mm**.
+
+⚠️ **The unproven assumption is gallery scale.** TMR ([2305.00976](https://arxiv.org/abs/2305.00976))
+shows *motion*-level R@1 collapsing **67.2% → 5.7% purely by growing the gallery from 32 to 4,380**.
+Pose space is lower-dimensional and far more densely covered, so CLEP's 2M result is plausible — but
+**that number came from a search snippet; the CVPR PDF returns 403 and there is no arXiv mirror.
+Single-source, unverified.** Also note AMASS flattened is only **~4–9M frames**; exceeding 10M
+requires MotionMillion (~216M frames) or Motion-X (15.6M), both non-commercial.
+
+**⭐ Retrieval-augmented generation wins where it matters most — out of domain.** VimoRAG
+([2508.12081](https://arxiv.org/abs/2508.12081), NeurIPS 2025) gives the same backbone a 3.8× FID
+improvement in-domain (MotionGPT 0.501 → 0.131), which merely *ties* the best non-RAG models. Zero-shot
+on IDEA400 it is not close:
+
+| IDEA400 zero-shot | FID ↓ |
+|---|---|
+| **VimoRAG** | **2.388** |
+| T2M-GPT | 5.359 |
+| MotionGPT | 6.202 |
+| ReMoDiffuse | 9.639 |
+
+**A 4× margin over the next best.** For a system fielding open-ended user text, that is the relevant
+number. Retrieval bank: HcVD, 425,988 videos. ⚠️ Code *"will be open soon"* — **not released**.
+
+**Critic:** **DPoser-X** ([2508.00599](https://arxiv.org/abs/2508.00599), ICCV 2025 **oral**) — a
+diffusion whole-body pose prior supporting completion, denoising and IK. **MIT, weights released**
+([moonbow721/DPoser](https://github.com/moonbow721/DPoser)). Snapping a proposed key onto the pose
+manifold before densification is cheap insurance and the natural home for the §5 verifier.
+
+### 8d.9 🚨 The experiment that must run first
+
+**No paper anywhere injects angular noise into keyframe joint rotations and measures downstream
+degradation.** The literature has tested timing error (±5 frames, 2503.01016), spatial incompleteness
+(2509.16064), and positional perturbation (IKMo). **Per-joint rotational error of 10–20°: nothing.**
+
+That is the load-bearing assumption of this entire architecture — *if a proposed keyframe is 10–20°
+off per joint, does the densifier absorb it or propagate it?* — and **it has no published answer.**
+
+**The experiment:** take CondMDI's MIT-licensed checkpoint, perturb held-out keyframes by
+5/10/20/30° per joint, sweep the tolerance parameter c, plot FID and semantic accuracy. A few
+GPU-days. It gates every downstream decision, and running it puts this project ahead of the published
+literature on the one question the design depends on. **Build this before building anything else.**
+
+Everything adjacent points the right way — tolerant conditioning at c≈0.5–0.85 is *designed* to
+absorb exactly this — but that is inference, not measurement, and it should be labelled as such in
+any plan.
+
+### 8d.10 Two tasks that are routinely conflated
+
+Most published "keyframe control" comparisons are invalid because two different tasks share the name:
+
+- **Task 1 — full-pose in-betweening.** Condition = complete poses at sparse frames. *This is the
+  project's task.* CondMDI, NINB, Goel et al., 2504.09413, AnchorRoute.
+- **Task 2 — sparse joint-xyz spatial control.** Condition = 3D positions of a few joints over time.
+  OmniControl, MotionLCM, TLControl, MaskControl, GMD.
+
+**None of the nine major Task-2 papers compares against CondMDI at all** — not an oversight; they
+measure something else. Do not read MaskControl's FID against CondMDI's, and treat the §8d.6
+"how keys enter" table as a claim about *mechanism* (guidance vs native vs masked-generative), not a
+cross-comparable leaderboard.
+
+**Task 1 current best — AnchorRoute** ([2605.14716](https://arxiv.org/abs/2605.14716), May 2026):
+frozen transition-masked-diffusion generator plus a "RouteSolver" refinement head, **only 1.2M
+trainable params** (vs 12–30M for alternatives), CC BY 4.0. Its Table III exposes the
+generator/solver trade-off directly — RS500 drives control error to 0.006 m at the cost of FID
+(0.070 → 0.153). **That knob is the tolerance dial, exposed as a hyperparameter.**
+⚠️ Its reported CondMDI baseline (control error **0.507 m**, vs CondMDI's own 0.0422 for sparse VR
+joints) is a >10× degradation that implies CondMDI was run out-of-distribution — spatially-sparse
+keyjoints instead of the full-pose keyframes it is built to impute. **Read AnchorRoute's margin over
+CondMDI with that caveat.**
+
+⚠️ **NINB's advertised repo is empty** — `Coondinator/NINB`, created the day of the arXiv post, one
+zero-byte README, never pushed. **Not code-available**, whatever the paper says. Verify code
+availability by API, never by the paper's claim.
+
+### 8d.11 Physics: skip it, at least initially
+
+Real HumanML3D motion has foot-skate ratio **0.000**; CondMDI produces **0.0806–0.0936**; AnchorRoute
+and SFControl reach **0.060–0.061**. **The 2026 kinematic SOTA already cuts foot skate ~35% below
+CondMDI with no physics at all**, via a 1.2M-parameter solver head. CondMDI's own authors agree the
+cheap fix suffices: *"minor footskate and motion jitter... could likely be addressed with an
+appropriate footskate or smoothness loss."*
+
+The heavyweight option, **PHC** ([2305.06456](https://arxiv.org/abs/2305.06456)):
+
+| Split | Success ↑ | MPJPE-global ↓ | MPJPE-local ↓ |
+|---|---|---|---|
+| AMASS-Train (11,411 seqs) | **98.3%** | 37.7 mm | 27.5 mm |
+| AMASS-Test (140 seqs) | **95.7%** | 48.2 mm | 31.1 mm |
+
+Runs >30 FPS at inference, but costs *"around a week to train all primitives and composer"* on a
+single **A100** with Isaac Gym — not reachable on this project's hardware. **And the trade is bad on
+its face: a physics pass replaces your motion with a simulator's re-enactment, injecting 30–50 mm of
+tracking error everywhere to remove <0.1 of foot-skate ratio.** Failures concentrate in *"highly
+dynamic motions such as high jumping and back flipping"* — exactly the motions worth having.
+
+**Order of operations:** (1) start from a densifier already at foot-skate ~0.060; (2) add a
+lightweight solver/IK contact pass in the AnchorRoute mould; (3) only then consider physics — and
+only via **ProtoMotions** ([NVlabs/ProtoMotions](https://github.com/NVlabs/ProtoMotions), **Apache-2.0**,
+the sole permissive option), never PHC's **CC BY-NC-SA** weights. ⚠️ ProtoMotions' Apache-2.0 header
+covers the framework; the SMPL/SMPL-H notices in `legal/` carry their own non-commercial terms.
 
 ---
 
