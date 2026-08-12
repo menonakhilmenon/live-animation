@@ -1,0 +1,10 @@
+.venv*/
+third_party/
+data/
+checkpoints/
+save/
+*.pyc
+__pycache__/
+results/
+# ...but the sweep outputs are the deliverable
+!experiments/keyframe-noise/results/

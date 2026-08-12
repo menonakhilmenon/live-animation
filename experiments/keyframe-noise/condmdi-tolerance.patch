@@ -1,0 +1,169 @@
+diff --git a/diffusion/gaussian_diffusion.py b/diffusion/gaussian_diffusion.py
+index 8e4bc47..bc3a0cc 100644
+--- a/diffusion/gaussian_diffusion.py
++++ b/diffusion/gaussian_diffusion.py
+@@ -402,6 +402,25 @@ class GaussianDiffusion:
+                 model_output, _ = model_output
+             return model_output
+ 
++        def soft_impute(a, b, impute_mask):
++            '''Override a with b where impute_mask is True.
++
++            model_kwargs['y']['keyframe_tolerance'] softens the override into a
++            convex blend, so a keyframe becomes a target rather than a law:
++              c = 1.0 -> hard replacement (upstream behaviour, the default)
++              c = 0.0 -> no imputation; only the model's native keyframe
++                         conditioning path constrains the sample
++            Used by experiments/keyframe-noise to trade keyframe fidelity
++            against motion plausibility under noisy keyframes.
++            '''
++            c = model_kwargs['y'].get('keyframe_tolerance', 1.0)
++            if c == 1.0:
++                return (a * ~impute_mask) + (b * impute_mask)
++            # .to(a.dtype), not .double(): ROCm #6299 zeroes bool->float64 casts
++            # on gfx1201.
++            w = impute_mask.to(a.dtype) * c
++            return a * (1.0 - w) + b * w
++
+         if inpainting_util.requires_reconstruction_guidance(model_kwargs, t):
+             inpainting_mask, inpainted_motion = model_kwargs['y']['inpainting_mask'], model_kwargs['y']['inpainted_motion']
+             assert self.model_mean_type == ModelMeanType.START_X, 'This feature supports only X_start pred for now!'
+@@ -421,7 +440,7 @@ class GaussianDiffusion:
+             sqrt_alpha_bar = _extract_into_tensor(self.sqrt_alphas_cumprod, t, cond_grad.shape)
+             tilde_x = hat_x - (w_r * sqrt_alpha_bar  / 2) * cond_grad
+ 
+-            model_output = (tilde_x * ~inpainting_mask) + (inpainted_motion * inpainting_mask) if inpainting_util.requires_imputation(model_kwargs, t) else \
++            model_output = soft_impute(tilde_x, inpainted_motion, inpainting_mask) if inpainting_util.requires_imputation(model_kwargs, t) else \
+                            (tilde_x * ~inpainting_mask) + (hat_x * inpainting_mask)
+ 
+         elif inpainting_util.requires_imputation(model_kwargs, t):
+@@ -432,7 +451,7 @@ class GaussianDiffusion:
+                 mask = model_kwargs['y']['mask'].float().to(inpainting_mask.device)
+                 inpainting_mask = (inpainting_mask * mask).bool()
+                 hat_x = get_conv_model_output(x, t, model_kwargs)
+-                model_output = (hat_x * ~inpainting_mask) + (inpainted_motion * inpainting_mask)
++                model_output = soft_impute(hat_x, inpainted_motion, inpainting_mask)
+ 
+             elif model_kwargs['y']['replacement_distribution'] == 'marginal':
+                 # Inpainting where noise added to observed data comes from q(x_{t-1} | x_0) - implementation in p_sample_loop_progressive
+@@ -820,8 +839,23 @@ class GaussianDiffusion:
+             assert sample.shape == inpainting_mask.shape == inpainted_motion.shape
+ 
+             def impute(a, b, impute_mask):
+-                '''Override a with b. Mask is True where we want to override.'''
+-                return (a * ~impute_mask) + (b * impute_mask)
++                '''Override a with b. Mask is True where we want to override.
++
++                model_kwargs['y']['keyframe_tolerance'] softens the override into
++                a convex blend, so a keyframe becomes a target rather than a law:
++                  c = 1.0 -> hard replacement (upstream behaviour, the default)
++                  c = 0.0 -> no imputation; only the model's native keyframe
++                             conditioning path constrains the sample
++                Used by experiments/keyframe-noise to trade keyframe fidelity
++                against motion plausibility under noisy keyframes.
++                '''
++                c = model_kwargs['y'].get('keyframe_tolerance', 1.0)
++                if c == 1.0:
++                    return (a * ~impute_mask) + (b * impute_mask)
++                # .to(a.dtype) rather than .double(): ROCm #6299 zeroes bool->float64
++                # casts on gfx1201.
++                w = impute_mask.to(a.dtype) * c
++                return a * (1.0 - w) + b * w
+ 
+             if int(
+                     t[0]
+@@ -842,9 +876,9 @@ class GaussianDiffusion:
+                                                       t_minus_one)
+                         sample = impute(sample, noised_motion, inpainting_mask)
+                         # Also update pred_xstart by replacing the imputed parts, this is not the same as what sample currently is.
+-                        out["pred_xstart"] = (
+-                            out["pred_xstart"] * ~inpainting_mask) + (
+-                                inpainted_motion * inpainting_mask)
++                        out["pred_xstart"] = impute(out["pred_xstart"],
++                                                    inpainted_motion,
++                                                    inpainting_mask)
+                     elif impute_type == 'ddim':
+                         eps = self._predict_eps_from_xstart(
+                             x, t, inpainted_motion)
+diff --git a/model/mdm.py b/model/mdm.py
+index e8344cc..f6c8e05 100644
+--- a/model/mdm.py
++++ b/model/mdm.py
+@@ -307,11 +307,11 @@ class MDM(nn.Module):
+ 
+     def _apply(self, fn):
+         super()._apply(fn)
+-        self.rot2xyz.smpl_model._apply(fn)
++        self.rot2xyz.defer_apply(fn)
+ 
+     def train(self, *args, **kwargs):
+         super().train(*args, **kwargs)
+-        self.rot2xyz.smpl_model.train(*args, **kwargs)
++        self.rot2xyz.defer_train(*args, **kwargs)
+ 
+ 
+ class PositionalEncoding(nn.Module):
+diff --git a/model/mdm_unet.py b/model/mdm_unet.py
+index 17dd151..d1693fe 100644
+--- a/model/mdm_unet.py
++++ b/model/mdm_unet.py
+@@ -850,11 +850,11 @@ class MDM_UNET(nn.Module):
+ 
+     def _apply(self, fn):
+         super()._apply(fn)
+-        self.rot2xyz.smpl_model._apply(fn)
++        self.rot2xyz.defer_apply(fn)
+ 
+     def train(self, *args, **kwargs):
+         super().train(*args, **kwargs)
+-        self.rot2xyz.smpl_model.train(*args, **kwargs)
++        self.rot2xyz.defer_train(*args, **kwargs)
+ 
+ 
+ class PositionalEncoding(nn.Module):
+diff --git a/model/rotation2xyz.py b/model/rotation2xyz.py
+index 9746c7d..ad60d2e 100644
+--- a/model/rotation2xyz.py
++++ b/model/rotation2xyz.py
+@@ -12,7 +12,40 @@ class Rotation2xyz:
+     def __init__(self, device, dataset='amass'):
+         self.device = device
+         self.dataset = dataset
+-        self.smpl_model = SMPL().eval().to(device)
++        self._smpl_model = None
++        self._pending_apply = []
++        self._pending_train = None
++
++    @property
++    def smpl_model(self):
++        # Built on first use rather than at construction. SMPL_NEUTRAL.pkl is a
++        # chumpy pickle, and chumpy does not import on Python >=3.11 / numpy >=1.24.
++        # Nothing on the hml_vec sampling path touches SMPL -- it is only needed
++        # to produce meshes -- so deferring keeps sampling runnable while still
++        # failing loudly for anything that genuinely needs the body model.
++        if self._smpl_model is None:
++            m = SMPL().eval().to(self.device)
++            # replay the .to()/.train() calls the parent module made meanwhile,
++            # so a deferred build lands in the same state an eager one would
++            for fn in self._pending_apply:
++                m._apply(fn)
++            if self._pending_train is not None:
++                m.train(*self._pending_train[0], **self._pending_train[1])
++            self._smpl_model = m
++        return self._smpl_model
++
++    def defer_apply(self, fn):
++        """_apply for the SMPL submodule, queued if it has not been built yet."""
++        if self._smpl_model is None:
++            self._pending_apply.append(fn)
++        else:
++            self._smpl_model._apply(fn)
++
++    def defer_train(self, *args, **kwargs):
++        if self._smpl_model is None:
++            self._pending_train = (args, kwargs)
++        else:
++            self._smpl_model.train(*args, **kwargs)
+ 
+     def __call__(self, x, mask, pose_rep, translation, glob,
+                  jointstype, vertstrans, betas=None, beta=0,

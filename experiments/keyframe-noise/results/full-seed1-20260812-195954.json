@@ -1,0 +1,57 @@
+{
+  "model": "./save/condmdi_randomframes/model000750000.pt",
+  "seed": 1,
+  "guidance": 2.5,
+  "num_samples": 16,
+  "thetas": [
+    0,
+    5,
+    10,
+    20,
+    30
+  ],
+  "tolerances": [
+    1.0,
+    0.5,
+    0.2,
+    0.05,
+    0.0
+  ],
+  "trans_length": 10,
+  "texts": [
+    "a man walks forward with arms relatively stiff at sides.",
+    "a person is boxing, jabbing mostly with his left hand.",
+    "a person slowly walked forward and right direction",
+    "a person takes a big step backwards.",
+    "from a standing position person leans their head down to their right slowly, in front of their chest then back up kind of like a snake.",
+    "person picks up something on their left side and moves it to their right side",
+    "a person gets down and crawls around the floor.a",
+    "a man movea his right hand as if to wipe down a tabletop.",
+    "the person is making an arm gesture putting his arms up into the air",
+    "a person walks a path that bends left.",
+    "a person is doing jumping jacks.",
+    "a person walks forward and stops.",
+    "jumping forward quickly then stopping.",
+    "a person taking a huge diagonal step",
+    "a man lifts his hands up in front his face and turns to his right, and then his left, and puts his hands back down.",
+    "a person is putting both hands to his face."
+  ],
+  "names": [
+    "M014010",
+    "M013449",
+    "M005202",
+    "M008367",
+    "010150",
+    "003494",
+    "M008556",
+    "013411",
+    "009137",
+    "008077",
+    "009441",
+    "011323",
+    "M007659",
+    "M001723",
+    "005396",
+    "M012355"
+  ]
+}
