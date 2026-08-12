@@ -1592,6 +1592,66 @@ diffusion whole-body pose prior supporting completion, denoising and IK. **MIT, 
 ([moonbow721/DPoser](https://github.com/moonbow721/DPoser)). Snapping a proposed key onto the pose
 manifold before densification is cheap insurance and the natural home for the §5 verifier.
 
+**⭐ Cost of the retrieval embedding — this is now the main trainable component, and it is cheap.**
+PoseScript's `PoseText` is a complete published recipe: VPoser-style pose encoder (156-d axis-angle →
+512-d, ~1–2M params) + **frozen DistilBERT** → linear 768→512 → 4-layer transformer (d=512, 4 heads,
+FF 1024, ~8.4M). Symmetric batch-based contrastive loss with learned temperature.
+
+| | |
+|---|---|
+| **Trainable params** | **10–12M** (4× smaller than MoMask; frozen DistilBERT adds 66M non-trainable) |
+| **Training** | **~13–27 GPU-hours in bf16**, ~1–2 days fp32 |
+| **VRAM** | **<8 GB** at batch 512 |
+| Schedule | pretrain 1000 ep / batch 512 / lr 2e-4 on 100K poses × 3 captions ≈ 586K iters; finetune 200–300 ep / batch 32 on the 6,283 human captions (**under an hour**) |
+
+**⭐ The trick that makes it cheap: DistilBERT is frozen, so cache its per-token hidden states once**
+(300K captions × 54 tokens × 768 × 2 B ≈ **24.9 GB** as an `np.memmap`; one-time pass ~5 min in
+bf16). The text branch then collapses to the 4-layer topping. That is **1/10th to 1/50th the cost of
+training MoMask** — roughly one MDM eval run.
+⚠️ Contrastive loss wants large batches because the batch *is* the negative pool. Naive gradient
+accumulation shrinks that pool and costs recall; prefer batch 256–512 in bf16, or use gathered
+negatives / cross-batch memory if you must accumulate.
+
+**⚠️⚠️ Correction to the index size implied above — make it ~20× smaller.** PoseScript's own corpus
+construction argues against a 5–10M index: they *"excluded the first and last 25 frames of each
+sequence"*, *"sampled only one pose from every 25 frames"*, then ran **farthest-point sampling** to
+land on 100K. AMASS at 30 fps is ~4.9M frames, so **"flatten all of AMASS" is raw data at ~50×
+redundancy** — consecutive frames are near-duplicates and a nearest-neighbour query returns forty
+views of the same instant.
+
+| Index | 10M × 512-d | Latency | Note |
+|---|---|---|---|
+| `IndexFlatIP` fp32 | 20.5 GB RAM | ~50 ms (BLAS, 8–16 cores) | exact |
+| `IVF_SQ8` | 5.1 GB | ~1 ms | near-exact |
+| `IVFPQ` m=64×8bit | **640 MB** | 0.5–2 ms | recall@1 ~0.80–0.95 w/ re-rank |
+| **500K flat fp32 (recommended)** | **1.0 GB** | **2–5 ms** | **exact, no approximation at all** |
+
+**Subsample 1-in-25 then FPS/k-means to 100K–500K distinct poses.** A 500K exact flat index beats an
+approximate 10M index on every axis, and it is exactly the corpus construction the source paper
+validated. **FAISS is MIT** — one of the few permissive components in this stack.
+
+**⚠️ Honest ceiling: mRecall 45.3% / R@1 22.3% / R@5 50.1% / R@10 62.9%** on *human-written* captions
+(base 40.9 → +transformer 43.3 → +mirroring 45.3). The intended pose is in the top-10 about 63% of
+the time — workable as a **proposer feeding a refiner**, not as a one-shot selector.
+🚨 **Do not quote PoseScript's ~72.8% mRecall on *automatic* captions as if it applied to real user
+text**, and note §8d.8's 78.7 figure is PoseEmbroider on BEDLAM-Script — a different benchmark.
+TMR++'s cross-dataset result warns this degrades further out-of-domain.
+
+**⭐ Retrieval buys physical plausibility for free.** Every candidate is real mocap, so self-collision,
+joint ROM, bone-length consistency and balance **pass by construction**. That collapses proposer
+evaluation to semantic alignment alone — the one thing physics heuristics cannot measure anyway
+(§8d.12) — and repurposes the physics metrics as a **regression guard on the densifier** instead.
+
+🚨 **But it sharpens the licensing problem rather than softening it.** A retrieval system does not
+merely *train* on AMASS — it **redistributes AMASS poses verbatim at inference time**. That is a
+distribution question and strictly harder than the generative case. For any commercial path the index
+must be built from **100STYLE (CC BY 4.0, commercial use explicitly permitted** — 4M frames /
+1,125 min / 100 styles / 60 fps / 28-bone BVH, **locomotion only)** or your own capture.
+⚠️ Also correcting §8d.2: **MotionMillion's repo requires SMPL+H and DMPL downloads**, so even its
+Apache-2.0 *code* is not a clean commercial path.
+⚠️ And retrieval cannot produce poses outside the corpus — novel or stylized actions fail with **no
+graceful degradation.**
+
 ### 8d.9 🚨 The experiment that must run first
 
 **No paper anywhere injects angular noise into keyframe joint rotations and measures downstream
@@ -1602,13 +1662,185 @@ That is the load-bearing assumption of this entire architecture — *if a propos
 off per joint, does the densifier absorb it or propagate it?* — and **it has no published answer.**
 
 **The experiment:** take CondMDI's MIT-licensed checkpoint, perturb held-out keyframes by
-5/10/20/30° per joint, sweep the tolerance parameter c, plot FID and semantic accuracy. A few
-GPU-days. It gates every downstream decision, and running it puts this project ahead of the published
+5/10/20/30° per joint, sweep the tolerance parameter c, plot FID **plus keyframe error plus skating
+ratio**. It gates every downstream decision, and running it puts this project ahead of the published
 literature on the one question the design depends on. **Build this before building anything else.**
 
 Everything adjacent points the right way — tolerant conditioning at c≈0.5–0.85 is *designed* to
 absorb exactly this — but that is inference, not measurement, and it should be labelled as such in
 any plan.
+
+**✅ PyTorch3D is NOT a CondMDI dependency — verified from the repo, not the README.**
+`requirements.txt` contains no pytorch3d and the README's install block has no such line.
+`utils/rotation_conversions.py` is already a **vendored pure-torch copy** (its
+`# Check PYTORCH3D_LICENCE before use` header is attribution boilerplate and the sole reason
+PyTorch3D is named anywhere); it imports only `functools`, `typing`, `torch`, `torch.nn.functional`
+and defines all 23 rotation converters. `model/rotation2xyz.py` and `model/smpl.py` import no
+pytorch3d. **`eval/eval_humanml.py` — the exact file this experiment runs — imports nothing external
+at all** beyond the repo's own modules; no pytorch3d, no smplx, no chumpy on the evaluation path.
+
+**The real blockers are smaller and different:**
+- 🚨 **Strip `torch==1.13.1` and the four `nvidia-*-cu11` wheels.** Install ROCm torch first, then
+  `pip install -r requirements.txt --no-deps`. Same trap as `human_body_prior`'s `torch>=2.5,<2.6`.
+- `numpy==1.21.5` is the tightest pin; relaxing it means fixing a few `np.float`/`np.int` aliases.
+- **`chumpy` and `human-body-prior` are only needed under `visualize/`** for SMPL mesh work. This
+  experiment never touches it — skip both. Stick-figure matplotlib rendering already ships in-repo.
+- `spacy==3.3.1` + `en_core_web_sm` and OpenAI CLIP **are** required (CLIP is MDM/CondMDI's text
+  encoder).
+- The evaluator is the classic Guo all-263-dims one — **Protocol 1** of §8d.13. Correct for a
+  within-protocol sweep where only relative movement matters; **do not compare the absolute FIDs to
+  any paper on MARDM's essential-dims evaluator.**
+
+**⚠️ The actual cost driver is inference time, not setup.** CondMDI runs **54.4 s per sample** (1000-step
+DDPM, on a 2070). The standard protocol wants the full 4,384-text test set × 20 repetitions; times 4
+perturbation levels × N tolerance values that is **weeks of GPU time, not hours.** Cut to a fixed
+1,000-sample subset × 3 repetitions and **report the reduced protocol explicitly**, or use
+DDIM/respacing to cut steps.
+
+**⚠️ MoMask is not a substitute** — no keyframe-conditioning mechanism and no tolerance parameter, so
+the experiment does not transfer. Stay on CondMDI.
+
+**⭐ Track more than FID.** Perturbing joints by 5–30° will move plausibility metrics (NRDF distance,
+joint-ROM violation) and keyframe error **long before it moves FID** — those are the sensitive
+readouts here. CondMDI's published keyframe errors (K=1 0.3739, K=5 0.1789, K=20 0.0754) give a
+calibrated axis.
+
+### 8d.12 🚨 Training-free plausibility metrics barely beat chance
+
+**This corrects §8c.6's enthusiasm for geometry-only scorers.** MotionCritic's Table 1 measures each
+metric's pairwise accuracy at predicting human preference — **chance = 50%**:
+
+| Metric | MDM set | FLAME set |
+|---|---|---|
+| **MotionCritic** (learned) | **85.07%** | **81.43%** |
+| Person–Ground Contact | 71.78% | 69.82% |
+| Jerk | 65.48% | 65.84% |
+| PFC (EDGE) | 64.79% | 66.00% |
+| Acceleration | 64.26% | 66.67% |
+| Joint AE | 62.73% | 58.37% |
+| Pose-NDF | 55.13% | 53.07% |
+| Floating | 55.1% | — |
+| **Foot–floor penetration** | **53.61%** | 55.56% |
+| **Foot skating** | **52.46%** | — |
+| **MoBERT** (learned!) | **49.40%** | 52.40% |
+
+Corroborated independently by 4DHumanQA (48 in-lab subjects, SROCC vs MOS): **MPJPE 0.436**, global
+translation 0.389, LDJ smoothness 0.267, Hausdorff 0.177, **foot contact 0.144**.
+
+And MoBERT's own correlation study ([2309.10248](https://arxiv.org/abs/2309.10248), 1,400 AMT-rated
+pairs) is blunt about the standard metrics at the **sample** level: **R-Precision 0.036 / 0.042,
+MM-Dist 0.025 / 0.014, Root AVE −0.013 / 0.007.** Verbatim: *"none of the metrics currently used for
+this task show even a moderate correlation with human judgments on a sample level."* Model-level
+correlation is fine (R-Precision 0.816) — **these metrics rank systems, they do not rank samples.**
+
+**→ Treat physics metrics as artifact detectors and regression guards, never as quality scores.**
+Only person–ground contact and a *learned* critic carry usable signal.
+
+⚠️ **Foot skating has six mutually incompatible definitions; cross-paper numbers are meaningless.**
+The dominant one (GMD → OmniControl → most 2024–26 work) is `calculate_skating_ratio` in
+[guided-motion-diffusion](https://github.com/korrawe/guided-motion-diffusion) (MIT): foot skids
+>2.5 cm while foot height <5 cm. **Undocumented gotchas:** hardcoded fps=20, y-up, joints **10/11 are
+toes not ankles**, an **undocumented 5-frame uniform-filter smoothing**, and two stale source
+comments (`thresh_vel = 0.50 # 20 cm/s` is actually 50 cm/s) that will give you a different metric if
+you reimplement from the comments.
+🚨 **GT skating on HumanML3D is 0.0733** — so OmniControl's 0.0547 **scores better than real human
+motion.** OmniControl's "Real = 0.000" row is a table artifact. **Target your GT's value, never zero.**
+
+**What to build instead (~1 day, permissive, CPU-only, and nobody has released it):**
+1. **Capsule self-collision** — ~20 capsules on SMPL limbs, pairwise distance, skip adjacent pairs;
+   `trimesh`/`numpy`. (⚠️ `torch-mesh-isect` **requires CUDA and will not build on ROCm**;
+   `selfcontact`/TUCH is non-commercial.)
+2. **Empirical joint limits** from the 0.1/99.9 percentiles of *your own* corpus — training-free,
+   honest, dataset-matched, no license.
+3. **Ground contact + penetration** against your GT's 99th percentile.
+4. **⭐ Static balance** — signed distance from the mass-weighted CoM's horizontal projection to the
+   convex hull of contact vertices; negative means the pose falls over. **No released
+   support-polygon/balance checker for human poses exists at all.**
+
+**Report every one against your GT dataset's distribution, never against zero.**
+⚠️ **Bone-length consistency is identically zero if you emit SMPL rotations and run FK** — it only
+means anything if you emit joint *positions*.
+
+**Physics simulation** is the only grounded test, and there is exactly one ROCm-viable route:
+**[SMPLSim](https://github.com/ZhengyiLuo/SMPLSim) is BSD-3-Clause and runs on MuJoCo (CPU)**. PHC
+needs IsaacGym + CUDA. ZMP is effectively unused for evaluating generated human motion, and SMPL
+ships no segment masses.
+
+### 8d.13 The three incompatible HumanML3D protocols, verified
+
+**Axis 1 — all-263-dims vs essential-dims evaluator.** HumanML3D's 263-d vector has 7 feature groups
+but **only the first 4 render the motion**; joint rotations, local velocities and foot-contact flags
+are redundant. Guo et al.'s evaluator scores all 263. Per MARDM
+([2411.16575](https://arxiv.org/abs/2411.16575), CVPR 2025): **noise on the *redundant* dims alone
+moves FID 0.116 → 21.032 (≈180×)**, versus 2.021 for the same noise on essential dims. Re-scored:
+T2M-GPT **0.115 → 0.335** (R@1 0.497 → 0.470), MDM 0.481 → 0.518. *"The gap between VQ and diffusion
+methods closes substantially."* **This is a live fork** — ACMDM reports R@3 **0.713** on the new
+evaluator while MoMask reports **0.807** on the classic one. Different units.
+
+**Axis 2 — evaluator drift within the "same" protocol.** MLD's FID is **0.473** in Light-T2M's table
+and **0.673** in MLD's own paper — 42%, unexplained. Style-SALAD's re-eval of LoRA-MDM gives
+SRA 42.05 / FID 0.607 where LoRA-MDM's own paper gives 27.1 / 0.32.
+
+**Axis 3 — entirely incomparable feature spaces.** FID lives in the evaluator's latent space, so
+SMooDi's ~1.6, PersonaBooth's ~3 and MotionMillion-Eval's 10–31 are simply not on MoMask's 0.045
+scale.
+
+**Under-documented sub-axes:** R-Precision is computed within retrieval batches of **32** (1 correct +
+31 mismatched), not full-set retrieval — MLD never states the pool size. Results are **mean ± 95% CI
+over 20 runs**; some papers run once.
+
+🚨 **Saturation is complete. GT scores FID 0.002 / R@1 0.511 / MM-Dist 2.974 — and MoMask reports
+R@1 0.521 and MM-Dist 2.958, better than real motion on both.** Top-of-leaderboard separation
+(Light-T2M 0.040 vs MoMask 0.045 ± 0.002) is inside the confidence intervals.
+
+**⭐ Cheapest evaluation win: judge keyframes, not clips.** Single-pose 2AFC takes ~4–5 s vs ~12 s for
+a clip, so the same $50 buys **~1,500–2,000 pose judgments instead of ~500** — 3× the power, and it
+sidesteps every temporal-metric incompatibility above.
+
+**Human-eval reality check:** **not one generation paper reports a confidence interval, a
+significance test, or verbatim question text.** MDM used 31 raters and reports **42.3% preference
+against ground truth**; MoMask 42 AMT Masters, 42% vs GT; FlowMDM, OmniControl and MotionLCM ran no
+user study at all. The one fully-specified copyable protocol is MoBERT's (25 gold questions, 5
+embedded per HIT, reject if >2 of 5 deviate by >1 point, forced full-video watch, $1.25/HIT).
+**Power:** for 80% power at α=0.05 against 0.50 you need N≈47 at p=0.70, 85 at 0.65, **194 at 0.60**.
+A $50 design — 40 prompt pairs, 30 raters × 16 comparisons = 480 judgments — gives effective N≈190,
+**±7 pp**. Include a ground-truth-mocap anchor so the number is comparable to MDM's 42.3%.
+
+### 8d.14 Training economics: compute is not the bottleneck
+
+| Model | Params | Authors' hardware | Wall-clock | 16 GB verdict |
+|---|---|---|---|---|
+| **Light-T2M** | **4.48M** | 2× 3090 Ti | — | ✅ 1–2 days |
+| **MoMask** | 44.85M | not reported | not reported | ✅ **best pick**, est. 1.5–3 days |
+| **MDM** | 17.88M | **1× RTX 2080 Ti** | **~3 days** | ✅ ~4–5 days (⚠️ eval alone ~20 h) |
+| MotionLCM | MLD's 25M | 1× RTX 4090 | — | ✅ distillation only, <4 GB |
+| FlowMDM | — | 1× RTX 3090 | 2 d / 4 d | ⚠️ ~6–9 days / 2–3 weeks |
+| MLD | ~26M | **8× V100** (~96 GPU-h) | 12 h | ⚠️ **download it, don't train it** |
+| T2M-GPT | 247.80M | 1× V100-32G | **92 h** | ⚠️ ~10–16 days; dominated by MoMask |
+| CondMDI | — | **1× A100**, 1M iters | — | ❌ ~3–6 weeks to *train* (fine to *use*) |
+| MotionGPT | 60–770M | **8× V100** | — | ❌ thousands of GPU-h |
+| MotionMillion 3B/7B | 1–7B | **5 nodes × 8×80 GB** | 10⁴–10⁵ GPU-h | ❌ **even inference fails** (7B bf16 ≈14 GB + T5-XL ≈6 GB > 16 GB) |
+
+**⭐ Scale is not the axis that matters: Light-T2M at 4.48M scores FID 0.040, beating MoMask's 0.045
+at 44.85M, and T2M-GPT at 248M is 3× worse than MoMask at 45M.** The whole frontier is 4.5M–45M
+params. Calibration at ~7 fp32 TFLOPS: MDM ≈ 0.64 s/step at 30% MFU → 500K steps ≈ 3.7 days, matching
+the authors' 3 days on a 2080 Ti. **bf16 autocast on RDNA4 WMMA is the single highest-leverage
+optimization** and is numerically safe at these sizes. Note that at these params on ≤200 tokens you
+are often **kernel-launch/dataloader bound, not FLOPS bound** — and ROCm's launch overhead is worse
+than CUDA's.
+
+**If you ever do finetune:** nobody has published a text-to-motion finetune below **~11 minutes of
+mocap per concept**, and **zero** papers report metrics below 100 clips. LoRA-MDM
+([2503.19557](https://arxiv.org/abs/2503.19557), **code MIT, weights released**) is the closest
+match — rank-5 LoRA on attention (~2% of those params), 4,000 steps, lr 1e-5, single L40S. Its
+ablations are the useful part: rank trades style for text monotonically (r=3 → SRA 62.1/R 0.814;
+r=10 → 79.8/0.775), and **the prior-preservation batch source is decisive — self-generated motions
+give R-precision 0.631 vs 0.789 for real HumanML3D data. Never self-distill the prior batch.**
+⚠️ Most "few-shot" claims in this literature mean one-shot *at inference* after training on the full
+style corpus (SMooDi, Style-SALAD, PersonaBooth). **No paper compares finetuning against
+from-scratch at small data** — state that as a gap, not a preference.
+
+---
 
 ### 8d.10 Two tasks that are routinely conflated
 
