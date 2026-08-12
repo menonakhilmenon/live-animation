@@ -42,9 +42,39 @@ def load(paths):
         if "seed" not in d.columns:
             meta = pathlib.Path(path).with_suffix(".json")
             d["seed"] = json.loads(meta.read_text())["seed"] if meta.exists() else i
+        if "mode" not in d.columns:
+            d["mode"] = "independent"  # the only mode before the coherent control
         d["source"] = pathlib.Path(path).name
         frames.append(d)
     return pd.concat(frames, ignore_index=True)
+
+
+def mode_contrast(df):
+    """Independent vs coherent keyframe error, paired on (seed, sample).
+
+    Both modes inject exactly theta degrees per joint. They differ only in
+    whether consecutive keyframes are wrong in the same direction. If the damage
+    is about pose error, they should agree; if it is about keyframes disagreeing
+    with each other, only 'independent' should hurt.
+    """
+    modes = sorted(df["mode"].unique())
+    if len(modes) < 2:
+        return
+    seeds = sorted(set.intersection(*(set(df[df["mode"] == m].seed.unique()) for m in modes)))
+    d = df[df.seed.isin(seeds)]
+    print("\n== independent vs coherent error " + "=" * 30)
+    print(f"   seeds {seeds}; both inject exactly theta deg/joint\n")
+    for c in sorted(d.tolerance.unique(), reverse=True):
+        sub = d[d.tolerance == c]
+        if sub["mode"].nunique() < 2:
+            continue
+        print(f"  c = {c:.2f}")
+        for col, scale, label, _f in METRICS[2:4]:
+            for m in modes:
+                vals = [sub[(sub["mode"] == m) & (sub.theta == th)][col].mean() * scale
+                        for th in sorted(sub.theta.unique())]
+                print(f"    {label:<14} {m:<12} " + " ".join(f"{v:8.4g}" for v in vals))
+        print()
 
 
 def main(paths):
@@ -140,6 +170,8 @@ def main(paths):
             m, se, t, k = paired(col, scale, a, b, key)
             print(f"    {label:<18} {m:+9.4g} +/- {se:.4g}  |t|={abs(t):5.1f}  n={k}")
         print()
+
+    mode_contrast(df)
 
 
 if __name__ == "__main__":

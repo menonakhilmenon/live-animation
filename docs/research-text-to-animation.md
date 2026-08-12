@@ -975,6 +975,13 @@ make three modifications, in order:
 3. **Do not train for exact adherence.** Adopt the blocking-pose tolerance formulation from day one
    — per-joint tolerance ~0.85, blended against the unconditional checkpoint every N steps, with a
    ±5–10 frame timing search window.
+   - ✅ **Direction confirmed by measurement, magnitude corrected — see §8d.9.** Relaxing exact
+     adherence helps even when the keyframes are *perfect*: on CondMDI at θ=0, hard imputation vs
+     native conditioning costs 3× the jerk and +65% foot skate. But the measured knee sits at
+     **c ≈ 0.2–0.5**, not 0.85, and the benefit is a uniformly better baseline — **not** absorption
+     of keyframe error, which does not happen at any tolerance. Note the two `c`s are different
+     mechanisms (2509.16064's per-joint blocking-pose tolerance vs CondMDI's imputation blend
+     weight), so treat the numeric value as indicative and re-measure on whatever stack you build.
 
 Why not the alternatives: ARDY is faster and better but ships **inference-only**, so it can never be
 adapted to a custom keyframe format, and its default text encoder alone wants ~14 GB. MaskControl is
@@ -1652,23 +1659,70 @@ Apache-2.0 *code* is not a clean commercial path.
 ⚠️ And retrieval cannot produce poses outside the corpus — novel or stylized actions fail with **no
 graceful degradation.**
 
-### 8d.9 🚨 The experiment that must run first
+### 8d.9 ✅ RUN — the answer is: it propagates
 
 **No paper anywhere injects angular noise into keyframe joint rotations and measures downstream
 degradation.** The literature has tested timing error (±5 frames, 2503.01016), spatial incompleteness
 (2509.16064), and positional perturbation (IKMo). **Per-joint rotational error of 10–20°: nothing.**
 
-That is the load-bearing assumption of this entire architecture — *if a proposed keyframe is 10–20°
-off per joint, does the densifier absorb it or propagate it?* — and **it has no published answer.**
+That was the load-bearing assumption of this entire architecture — *if a proposed keyframe is 10–20°
+off per joint, does the densifier absorb it or propagate it?* **It is now measured.** Code, method
+and full tables: `experiments/keyframe-noise/` (see `RESULTS.md`). CondMDI `condmdi_randomframes`
+@750k, 32 motions × 5 angles × 5 tolerances, paired contrasts, geometric metrics.
 
-**The experiment:** take CondMDI's MIT-licensed checkpoint, perturb held-out keyframes by
-5/10/20/30° per joint, sweep the tolerance parameter c, plot FID **plus keyframe error plus skating
-ratio**. It gates every downstream decision, and running it puts this project ahead of the published
-literature on the one question the design depends on. **Build this before building anything else.**
+**🚨 The densifier does not absorb keyframe error. It propagates it, at every tolerance.**
+Output-to-clean joint error tracks the injected keyframe displacement to within 4% (θ=30° injects
+236 mm; the best result over all tolerances is 226 mm), and whole-motion divergence from the
+unperturbed reference tracks it roughly one-for-one. **Any pose-accuracy budget for the proposer is
+the pose-accuracy budget for the finished animation.** There is no downstream cleanup.
 
-Everything adjacent points the right way — tolerant conditioning at c≈0.5–0.85 is *designed* to
-absorb exactly this — but that is inference, not measurement, and it should be labelled as such in
-any plan.
+**🚨 The prior expectation in this section was wrong, and this corrects it.** "Tolerant conditioning
+at c≈0.5–0.85 is *designed* to absorb exactly this" — it is not, and it does not. Tolerance shifts
+the whole quality curve down (jerk drops ~67% at every θ going from hard imputation to native
+conditioning) but leaves the **degradation slope unchanged**: θ=0→30 costs +158% jerk at c=1.0 and
++157% at c=0.0. Tolerance buys a better baseline, not robustness. §8b.2's `R-NoTolerance` ablation
+is real but means something narrower than it appeared to.
+
+**⭐ Two distinct failure modes, separable by metric.** A control holding θ fixed while varying only
+whether consecutive keyframes err in the *same* direction:
+
+| θ=30°, native conditioning | independent error | coherent (systematic) error |
+|---|---:|---:|
+| foot skate | 0.230 | **0.119** (= the θ=0 baseline) |
+| jerk (m/s³) | 457 | 362 |
+
+**A 30° systematic per-joint bias produces no foot-skate increase at all.** Foot skate measures
+keyframes *disagreeing with each other*; jerk measures the pose being *wrong*. Track both — they say
+which problem you have. (This also refines §8d.12: foot skate is a poor discriminator of pose error,
+but a strong one for inconsistency.) Under hard imputation the distinction vanishes — the override
+generates the jerk itself and the two modes become indistinguishable, so **c=1 destroys the
+diagnostic as well as the motion.**
+
+**Design consequences:**
+- **Do not use hard imputation.** At θ=0, with *perfect* keyframes, c=1.0 vs c=0.0 triples jerk
+  (518→169) and raises foot skate 65%. The cost of relaxing it is 62.5 mm of keyframe error — the
+  model declines to hit keyframes it is not forced to hit. Knee of the trade-off is **c ≈ 0.2–0.5**.
+- **10° per joint is not a safe budget** (83 mm displacement, +38% jerk). ~5° is.
+- **Prefer retrieving a contiguous clip and retargeting it once** over retrieving each keyframe
+  independently — systematic error is markedly cheaper than independent error. This strengthens the
+  §8d.8 retrieval proposer against a generative one on a second axis: retrieved poses are both
+  on-manifold *and* consistently wrong rather than independently wrong.
+
+**⚠️ What this does not establish.** References are model samples, not AMASS mocap (so this is the
+easy case, and real-mocap degradation should be at least this bad); absolute values are not
+comparable to the paper because we generate a fixed 196 frames per caption where CondMDI's eval
+respects true sequence length; no FID or R-precision; one keyframe density (2.04 keys/s); root
+trajectory never perturbed. Within-sweep contrasts are sound — every cell shares prompts, lengths
+and diffusion noise.
+
+**⚙️ Two implementation traps, both of which silently produce a null result.** (1) This checkpoint
+predicts x₀ (`ModelMeanType.START_X`), so the live imputation override is in `p_mean_variance`, not
+the `impute()` closure in `p_sample` — that closure is on the EPSILON path and never executes.
+Patching only the closure yields a sweep where every tolerance returns byte-identical output.
+(2) A HumanML3D 263-vector encodes each pose four times (rotations, ric positions, local velocities,
+foot contacts). Perturbing `[67:193]` alone produces a self-contradictory keyframe and measures
+robustness-to-garbage instead of robustness-to-angular-error; the rotations must be pushed through
+forward kinematics and every derived channel rebuilt.
 
 **✅ PyTorch3D is NOT a CondMDI dependency — verified from the repo, not the README.**
 `requirements.txt` contains no pytorch3d and the README's install block has no such line.
@@ -1685,6 +1739,15 @@ at all** beyond the repo's own modules; no pytorch3d, no smplx, no chumpy on the
 - `numpy==1.21.5` is the tightest pin; relaxing it means fixing a few `np.float`/`np.int` aliases.
 - **`chumpy` and `human-body-prior` are only needed under `visualize/`** for SMPL mesh work. This
   experiment never touches it — skip both. Stick-figure matplotlib rendering already ships in-repo.
+  - ❌ **Half wrong, as run.** `human-body-prior` is indeed unnecessary, but **`smplx` is imported on
+    the model-construction path**, not just under `visualize/`: `sample/conditional_synthesis.py` →
+    `utils/model_util.py` → `model/mdm.py` → `model/rotation2xyz.py` → `model/smpl.py` →
+    `from smplx import SMPLLayer`. `Rotation2xyz.__init__` then eagerly builds `SMPL()`, which
+    unpickles `SMPL_NEUTRAL.pkl` — **a chumpy pickle**, and chumpy does not import on Python ≥3.11 /
+    numpy ≥1.24. Sampling dies at model construction, before any `visualize/` code is reachable.
+    **Fix: make SMPL construction lazy** (`experiments/keyframe-noise/condmdi-tolerance.patch`) —
+    nothing on the `hml_vec` path needs a body model, so deferring it removes the dependency
+    entirely rather than fighting chumpy. `smplx` itself installs fine and is pure Python.
 - `spacy==3.3.1` + `en_core_web_sm` and OpenAI CLIP **are** required (CLIP is MDM/CondMDI's text
   encoder).
 - The evaluator is the classic Guo all-263-dims one — **Protocol 1** of §8d.13. Correct for a
@@ -1696,6 +1759,13 @@ DDPM, on a 2070). The standard protocol wants the full 4,384-text test set × 20
 perturbation levels × N tolerance values that is **weeks of GPU time, not hours.** Cut to a fixed
 1,000-sample subset × 3 repetitions and **report the reduced protocol explicitly**, or use
 DDIM/respacing to cut steps.
+
+> ✏️ **As-run correction: that estimate was ~16× pessimistic, because 54.4 s/sample is unbatched.**
+> On the 9070 XT, a batch of 16 × 196 frames × 1000 DDPM steps takes **75 s total — 4.7 s/sample**,
+> at ~2.5 GiB. The full 5θ × 5c sweep at n=32 was **~65 min**, not weeks, with no DDIM respacing and
+> no protocol reduction beyond sample count. Batch the perturbation levels, not the denoising steps.
+> The remaining reason to subsample is the *evaluator* (FID/R-precision over 4,384 texts), not the
+> sampler.
 
 **⚠️ MoMask is not a substitute** — no keyframe-conditioning mechanism and no tolerance parameter, so
 the experiment does not transfer. Stay on CondMDI.
