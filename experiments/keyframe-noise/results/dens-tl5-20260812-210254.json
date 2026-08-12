@@ -1,0 +1,56 @@
+{
+  "model": "condmdi_randomframes",
+  "checkpoint": "./save/condmdi_randomframes/model000750000.pt",
+  "seed": 0,
+  "guidance": 2.5,
+  "perturb_mode": "independent",
+  "obs_joints": "all",
+  "perturb_joints": "all",
+  "num_samples": 16,
+  "thetas": [
+    0,
+    10,
+    30
+  ],
+  "tolerances": [
+    1.0,
+    0.0
+  ],
+  "trans_length": 5,
+  "texts": [
+    "a person wlowly walked by making the circle",
+    "a person walks straight forward quickly",
+    "the person is holding his right arm up.",
+    "standing in place then walking forward.",
+    "the person was jogging in place.",
+    "user is pointing with left hand in multiple directions",
+    "person brings left forearm up to their eyesight like they are checking the time on a watch.",
+    "a man is doing jumping jacks.",
+    "the figure takes a few steps forward before pick something up turning around and walking back to where they were and crouching down to pick something up.",
+    "a person slowly walked backward, and sat on the knee and hands",
+    "a person walks straight going slightly to the left",
+    "he runs forward directly then stops",
+    "person seems to be exercising by bending at the knees and walking forward",
+    "the man dances his feet in circles in front of himself.",
+    "a person brings their left arm up and bends their elbow so it is across their stomach.",
+    "a man takes a big swing with his arm."
+  ],
+  "names": [
+    "M008084",
+    "M002332",
+    "013317",
+    "011841",
+    "M011379",
+    "007428",
+    "006819",
+    "M004499",
+    "M013806",
+    "M013980",
+    "007240",
+    "000696",
+    "006095",
+    "M008296",
+    "M005274",
+    "M003849"
+  ]
+}

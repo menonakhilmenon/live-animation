@@ -71,7 +71,10 @@ def table(df, row_key, row_label, fmt_row):
                     continue
                 vals = [sub[sub.theta == t][col].mean() * scale for t in thetas]
                 base, top = vals[0], vals[-1]
-                rel = f"{(top - base) / base * 100:+9.0f}%" if base else "        --"
+                # A percentage off a base that rounds to zero (kf error under
+                # hard imputation) is noise amplified to look like a result.
+                rel = (f"{(top - base) / base * 100:+9.0f}%"
+                       if base > 0.05 else "        --")
                 cells = "".join(fmt % v for v in vals)
                 print(f"    {fmt_row(rv):<20}" + cells + rel)
             print()
